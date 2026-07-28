@@ -80,7 +80,7 @@ def render_loop_script(
 
 
 def default_pks_argv() -> list[str]:
-    """Argv prefix for ``pks`` in the worker (respects yolo / unrestricted flags)."""
+    """Argv prefix for ``pks`` in the worker (respects YOLO mode)."""
     wh = shutil.which("pks")
     if wh:
         argv = [str(Path(wh).resolve())]
@@ -88,6 +88,4 @@ def default_pks_argv() -> list[str]:
         argv = [sys.executable, "-m", "pks"]
     if os.getenv("PKS_YOLO", "").lower() in ("1", "true", "yes"):
         argv.append("--yolo")
-    elif os.getenv("PKS_UNRESTRICTED", "").lower() in ("1", "true", "yes"):
-        argv.append("--unrestricted")
     return argv

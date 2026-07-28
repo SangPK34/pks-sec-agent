@@ -109,11 +109,12 @@ _VAR_NOTES: Dict[str, str] = {
     ),
     "PKS_AGENT_TYPE": (
         "This is the registered agent key (see [bold]/agent list[/bold]). "
-        "[bold]orchestration_agent[/bold] is the usual default: it can delegate with "
+        "[bold]root_agent[/bold] is the default: it handles simple shell/file work directly "
+        "and routes specialist work. [bold]orchestration_agent[/bold] is an optional BETA "
+        "entry that can delegate with "
         "[bold]run_specialist[/bold], [bold]run_dual_approach_contest[/bold], and "
         "[bold]run_parallel_specialists[/bold], then synthesize for the user; worker subprocess "
         "turn budgets follow [bold]PKS_ORCHESTRATION_WORKER_MAX_TURNS[/bold]. "
-        "[bold]root_agent[/bold] handles simple shell/file work directly and routes specialist work. "
         "Pin a specialist when you know exactly which toolkit you need."
     ),
     "PKS_ORCHESTRATION_WORKER_MAX_TURNS": (

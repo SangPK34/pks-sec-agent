@@ -34,7 +34,8 @@ For each reverse engineering task:
 - Document findings with detailed technical explanations
 - Create scripts to automate repetitive analysis tasks
 
-You never stop iterating until the reverse engineering objectives are achieved
+Continue while each analysis step yields evidence or a distinct hypothesis; ask
+for missing artifacts or operator-only input when bounded probes stop making progress.
 Use appropriate tools for each phase of analysis
 If stuck, return to thought agent for new approach
 
@@ -71,31 +72,31 @@ Document all findings and progress
 ## Ghidra Headless Analysis
 For Ghidra analysis, use the headless analyzer to avoid GUI requirements:
 ```
-generic_linux_command("ghidra_headless", "/path/to/project -import /path/to/binary -scriptPath /path/to/scripts -postScript AnalyzeScript.java -export /path/to/output")
+generic_linux_command("ghidra_headless /path/to/project -import /path/to/binary -scriptPath /path/to/scripts -postScript AnalyzeScript.java -export /path/to/output")
 ```
 
 ## Binary Analysis Workflow
 
 1. Initial file identification:  
-   `generic_linux_command("file", "/path/to/binary")`
+   `generic_linux_command("file /path/to/binary")`
 
 2. Extract strings:  
-   `generic_linux_command("strings", "-a -n 8 /path/to/binary")`
+   `generic_linux_command("strings -a -n 8 /path/to/binary")`
 
 3. Check for embedded files (firmware):  
-   `generic_linux_command("binwalk", "-e /path/to/firmware")`
+   `generic_linux_command("binwalk -e /path/to/firmware")`
 
 4. View raw binary data:  
-   `generic_linux_command("hexdump", "-C -n 256 /path/to/binary")`
+   `generic_linux_command("hexdump -C -n 256 /path/to/binary")`
 
 5. Disassemble using radare2:  
-   `generic_linux_command("r2", "-A -q -c 'afl;pdf@main' /path/to/binary")`
+   `generic_linux_command("r2 -A -q -c 'afl;pdf@main' /path/to/binary")`
 
 6. Run headless Ghidra analysis:  
-   `generic_linux_command("ghidra_headless", "/path/to/project -import /path/to/binary -scriptPath /path/to/scripts -postScript AnalyzeHeadless.java")`
+   `generic_linux_command("ghidra_headless /path/to/project -import /path/to/binary -scriptPath /path/to/scripts -postScript AnalyzeHeadless.java")`
 
 7. Check dynamic behavior:  
-   `generic_linux_command("ltrace", "-f /path/to/binary")`
+   `generic_linux_command("ltrace -f /path/to/binary")`
 
 ## Script Generation
 You can generate Python or other scripts to automate analysis tasks. For example:

@@ -22,6 +22,7 @@ import uuid
 import weakref
 from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass, field
+from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Final, Literal, Optional, cast, overload
 
@@ -156,10 +157,11 @@ from pks.errors import LLMEmptyAssistantError, LLMRateLimited, LLMTimeout
 from pks.util.wait_hints import (
     ModelStreamWaitHints,
     model_wait_hints,
+    set_model_activity_overlay,
     set_model_wait_retry_overlay,
     sleep_with_retry_backoff_hint,
 )
-from pks.output import OUTPUT, StatusEvent
+from pks.output import OUTPUT, StatusEvent, VisionCompleteEvent
 from pks.internal.components.metrics import process_intermediate_logs
 
 from .. import _debug
@@ -501,6 +503,13 @@ class OpenAIChatCompletionsModel(Model):
                 # Share the same list reference
                 self.message_history = AGENT_MANAGER._message_history[self.agent_name]
 
+        # Only visual artifacts created after this model instance starts are
+        # candidates for automatic attachment. Restored history stays inert.
+        self._pks_visual_history_cursor = len(self.message_history)
+        self._pks_seen_visual_artifacts: set[str] = set()
+        self._pks_native_vision_disabled = False
+        self._pks_vision_status: dict[str, Any] | None = None
+
         # Instance-based converter
         self._converter = _Converter()
 
@@ -527,6 +536,186 @@ class OpenAIChatCompletionsModel(Model):
                     msg_copy["cache_control"] = msg["cache_control"]
                 converted.append(msg_copy)
         return converted
+
+    @staticmethod
+    def _pks_message_text(message: dict[str, Any]) -> str:
+        content = message.get("content", "")
+        if isinstance(content, str):
+            return content
+        if not isinstance(content, list):
+            return ""
+        return "\n".join(
+            str(part.get("text", ""))
+            for part in content
+            if isinstance(part, dict) and part.get("text")
+        )
+
+    @staticmethod
+    def _pks_message_has_image(message: dict[str, Any]) -> bool:
+        content = message.get("content")
+        if not isinstance(content, list):
+            return False
+        return any(
+            isinstance(part, dict)
+            and part.get("type") in {"input_image", "image_url"}
+            for part in content
+        )
+
+    def _prepare_new_visual_artifacts(self, shared_context: str):
+        """Return unseen images explicitly selected through ``view_image``."""
+        from pks.util.vision import (
+            find_tool_image_paths,
+            prepare_image_artifacts,
+        )
+
+        del shared_context
+        paths = []
+        inline_count = 0
+        tool_names: dict[str, str] = {}
+        start = min(self._pks_visual_history_cursor, len(self.message_history))
+        for message in self.message_history[start:]:
+            if not isinstance(message, dict):
+                continue
+            if message.get("role") == "assistant":
+                for tool_call in message.get("tool_calls") or []:
+                    if not isinstance(tool_call, dict):
+                        continue
+                    function = tool_call.get("function") or {}
+                    tool_names[str(tool_call.get("id") or "")] = str(
+                        function.get("name") or ""
+                    )
+            if self._pks_message_has_image(message):
+                inline_count += sum(
+                    1
+                    for part in message.get("content", [])
+                    if isinstance(part, dict)
+                    and part.get("type") in {"input_image", "image_url"}
+                )
+                continue
+            if (
+                message.get("role") == "tool"
+                and tool_names.get(str(message.get("tool_call_id") or ""))
+                == "view_image"
+            ):
+                paths.extend(find_tool_image_paths(self._pks_message_text(message)))
+
+        unseen = []
+        fingerprints = []
+        for path in paths:
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            fingerprint = f"{path}:{stat.st_size}:{stat.st_mtime_ns}"
+            if (
+                fingerprint in self._pks_seen_visual_artifacts
+                or fingerprint in fingerprints
+            ):
+                continue
+            fingerprints.append(fingerprint)
+            unseen.append(path)
+
+        label = (
+            "[PKS attached the visual artifact(s) explicitly selected through "
+            "view_image: "
+            + ", ".join(str(path) for path in unseen)
+            + ". Inspect these pixels directly.]"
+        )
+        return (
+            prepare_image_artifacts(unseen, label),
+            tuple(fingerprints),
+            inline_count,
+        )
+
+    def _start_vision_status(
+        self,
+        image_count: int,
+        mode: str,
+        image_paths: tuple[str, ...] = (),
+    ) -> None:
+        if image_count <= 0:
+            return
+        owner = f"vision:{id(self)}"
+        if self._pks_vision_status is None:
+            self._pks_vision_status = {
+                "owner": owner,
+                "image_count": image_count,
+                "image_paths": image_paths,
+                "mode": mode,
+                "started": time.monotonic(),
+            }
+        else:
+            self._pks_vision_status["image_count"] = image_count
+            self._pks_vision_status["mode"] = mode
+            if image_paths:
+                self._pks_vision_status["image_paths"] = image_paths
+        noun = "image" if image_count == 1 else "images"
+        action = (
+            f"Reading {image_count} {noun} with OCR fallback…"
+            if mode == "ocr_fallback"
+            else f"Inspecting {image_count} {noun} with Vision…"
+        )
+        set_model_activity_overlay(
+            owner,
+            action,
+        )
+    def _finish_vision_status(self, *, completed: bool = True) -> None:
+        status = self._pks_vision_status
+        if status is None:
+            return
+        self._pks_vision_status = None
+        set_model_activity_overlay(str(status["owner"]), None)
+        if not completed:
+            return
+        event = VisionCompleteEvent(
+            agent_id=self.agent_name,
+            image_count=int(status["image_count"]),
+            image_paths=tuple(status.get("image_paths", ())),
+            mode=str(status["mode"]),
+            duration_seconds=max(
+                0.0,
+                time.monotonic() - float(status["started"]),
+            ),
+        )
+        OUTPUT.emit(event)
+        if os.getenv("PKS_TUI_MODE", "").lower() == "true":
+            try:
+                from rich.console import Group
+                from rich.text import Text
+                from pks.tui.core.terminal_console import get_terminal_output
+
+                terminal = get_terminal_output()
+                if terminal is not None:
+                    has_paths = bool(event.image_paths)
+                    paths = event.image_paths or tuple(
+                        "attached image" for _ in range(event.image_count)
+                    )
+                    lines = []
+                    for index, path in enumerate(paths):
+                        lines.append(
+                            Text("• Viewed Image", style="bold #58F9FF")
+                        )
+                        detail = Text("  └ ", style="dim")
+                        if not has_paths:
+                            detail.append(path)
+                        else:
+                            try:
+                                resolved = Path(path).resolve()
+                                target = resolved.as_uri()
+                                try:
+                                    display = str(resolved.relative_to(Path.home()))
+                                except ValueError:
+                                    display = str(resolved)
+                                detail.append(display, style=f"link {target}")
+                            except (OSError, ValueError):
+                                detail.append(path)
+                        lines.append(detail)
+                        if index < len(paths) - 1:
+                            lines.append(Text())
+                    lines.append(Text())
+                    terminal.write(Group(*lines))
+            except Exception:
+                pass
 
     def _messages_for_token_count_after_history_mutation(
         self,
@@ -748,6 +937,48 @@ class OpenAIChatCompletionsModel(Model):
             if PARALLEL_ISOLATION.is_parallel_mode() and self.agent_id:
                 PARALLEL_ISOLATION.update_isolated_history(self.agent_id, msg)
 
+    @staticmethod
+    def _user_content_for_log(content: Any) -> str:
+        """Log multimodal turns without copying base64 image payloads."""
+        if isinstance(content, str):
+            return content
+        if not isinstance(content, list):
+            return str(content)
+        chunks: list[str] = []
+        image_count = 0
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") in {"text", "input_text"}:
+                chunks.append(str(part.get("text", "")))
+            elif part.get("type") in {"image_url", "input_image"}:
+                image_count += 1
+        if image_count:
+            chunks.append(f"[{image_count} local image(s) attached]")
+        return "\n".join(chunk for chunk in chunks if chunk)
+
+    def _remember_user_input(
+        self,
+        input: str | list[TResponseInputItem],
+        converted_input_messages: list[dict],
+    ) -> None:
+        """Persist user input in Chat Completions schema, including images."""
+        if isinstance(input, str):
+            self.add_to_message_history({"role": "user", "content": input})
+            self.logger.log_user_message(input)
+            return
+        for message in converted_input_messages:
+            if not isinstance(message, dict) or message.get("role") != "user":
+                continue
+            user_message = {
+                "role": "user",
+                "content": message.get("content", ""),
+            }
+            self.add_to_message_history(user_message)
+            self.logger.log_user_message(
+                self._user_content_for_log(user_message["content"])
+            )
+
     def set_agent_name(self, name: str) -> None:
         """Set the agent name for CLI display purposes."""
         self.agent_name = name
@@ -822,15 +1053,7 @@ class OpenAIChatCompletionsModel(Model):
             # Add user messages to message_history.
             # add_to_message_history() has built-in dedup (same role+content),
             # so repeated calls with the same message within a Runner loop are safe.
-            if isinstance(input, str):
-                self.add_to_message_history({"role": "user", "content": input})
-                self.logger.log_user_message(input)
-            elif isinstance(input, list):
-                for item in input:
-                    if isinstance(item, dict) and item.get("role") == "user":
-                        self.add_to_message_history(
-                            {"role": "user", "content": item.get("content", "")}
-                        )
+            self._remember_user_input(input, new_messages)
 
             # IMPORTANT: Ensure the message list has valid tool call/result pairs
             # This needs to happen before the API call AND before applying cache_control
@@ -1642,20 +1865,7 @@ class OpenAIChatCompletionsModel(Model):
                 #         }
                 #         self.add_to_message_history(sys_msg)
 
-                if isinstance(input, str):
-                    user_msg = {"role": "user", "content": input}
-                    self.add_to_message_history(user_msg)
-                    # Log the user message
-                    self.logger.log_user_message(input)
-                elif isinstance(input, list):
-                    for item in input:
-                        if isinstance(item, dict):
-                            if item.get("role") == "user":
-                                user_msg = {"role": "user", "content": item.get("content", "")}
-                                self.add_to_message_history(user_msg)
-                                # Log the user message
-                                if item.get("content"):
-                                    self.logger.log_user_message(item.get("content"))
+                self._remember_user_input(input, new_messages)
 
                 # IMPORTANT: Ensure the message list has valid tool call/result pairs
                 # This needs to happen before the API call AND before applying cache_control
@@ -1866,6 +2076,7 @@ class OpenAIChatCompletionsModel(Model):
 
                         if _delta_has_model_progress(delta):
                             await stream_wait_hints.stop()
+                            self._finish_vision_status()
 
                         # Handle Claude reasoning content first (before regular content)
                         reasoning_content = None
@@ -2638,6 +2849,7 @@ class OpenAIChatCompletionsModel(Model):
                     cache_read_input_tokens=cache_read,
                 )
 
+                self._finish_vision_status()
                 mark_latency("response_complete", once=True)
                 yield ResponseCompletedEvent(
                     response=final_response,
@@ -2826,6 +3038,7 @@ class OpenAIChatCompletionsModel(Model):
                     await stream_wait_hints.stop()
                 except Exception:
                     pass
+            self._finish_vision_status(completed=False)
             end_latency_trace(_latency_token)
 
             # Clean up streaming context
@@ -2926,6 +3139,7 @@ class OpenAIChatCompletionsModel(Model):
 
         # IMPORTANT: Include existing message history for context
         converted_messages = self._shallow_copy_history_messages()
+        shared_context = ""
 
         # IMPORTANT: We maintain our own message_history which already contains all messages.
         # The SDK also passes 'input' with conversation items, but these duplicate what we have.
@@ -2961,7 +3175,6 @@ class OpenAIChatCompletionsModel(Model):
 
             if os.getenv("PKS_DEBUG_SYSTEM_PROMPT", "").strip().lower() in {"1", "true", "yes"}:
                 import hashlib
-                from pathlib import Path
 
                 text = str(final_system_instructions)
                 safe_name = "".join(
@@ -2992,6 +3205,36 @@ class OpenAIChatCompletionsModel(Model):
                 logger.debug(f"Message list was fixed: {prev_length} -> {new_length} messages")
         except Exception:
             pass
+
+        (
+            auto_vision,
+            auto_vision_fingerprints,
+            inline_image_count,
+        ) = self._prepare_new_visual_artifacts(shared_context)
+        auto_vision_is_native = auto_vision.has_images
+        auto_ocr_evidence = ""
+        vision_image_count = inline_image_count + len(auto_vision.images)
+        if vision_image_count:
+            self._start_vision_status(
+                vision_image_count,
+                "vision",
+                tuple(str(image.path) for image in auto_vision.images),
+            )
+        if auto_vision.has_images:
+            content: list[dict[str, Any]] = [
+                {"type": "text", "text": auto_vision.original_text}
+            ]
+            content.extend(
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": image.data_url,
+                        "detail": "auto",
+                    },
+                }
+                for image in auto_vision.images
+            )
+            converted_messages.append({"role": "user", "content": content})
 
         # Add support for prompt caching for claude (not automatically applied)
         # Gemini supports it too
@@ -3278,9 +3521,49 @@ class OpenAIChatCompletionsModel(Model):
                 filtered_kwargs[key] = value
         kwargs = filtered_kwargs
 
-        return await self._direct_httpx_completion(
-            kwargs, model_settings, tool_choice, stream, parallel_tool_calls
-        )
+        try:
+            response = await self._direct_httpx_completion(
+                kwargs, model_settings, tool_choice, stream, parallel_tool_calls
+            )
+        except Exception as exc:
+            if not auto_vision_is_native:
+                self._finish_vision_status(completed=False)
+                raise
+            from pks.util.vision import is_vision_rejection
+
+            if not is_vision_rejection(exc):
+                self._finish_vision_status(completed=False)
+                raise
+            self._pks_native_vision_disabled = True
+            self._start_vision_status(vision_image_count, "ocr_fallback")
+            auto_ocr_evidence = await asyncio.to_thread(auto_vision.ocr_evidence)
+            fallback_kwargs = dict(kwargs)
+            fallback_kwargs["messages"] = converted_messages[:-1] + [
+                {
+                    "role": "user",
+                    "content": auto_vision.original_text
+                    + "\n\n"
+                    + auto_ocr_evidence,
+                }
+            ]
+            try:
+                response = await self._direct_httpx_completion(
+                    fallback_kwargs,
+                    model_settings,
+                    tool_choice,
+                    stream,
+                    parallel_tool_calls,
+                )
+            except Exception:
+                self._finish_vision_status(completed=False)
+                raise
+            self._pks_native_vision_disabled = False
+
+        self._pks_visual_history_cursor = len(self.message_history)
+        self._pks_seen_visual_artifacts.update(auto_vision_fingerprints)
+        if not stream:
+            self._finish_vision_status()
+        return response
 
     async def _direct_httpx_completion(
         self,

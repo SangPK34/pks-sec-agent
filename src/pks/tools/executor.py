@@ -1496,57 +1496,16 @@ def run_command(
             max_wait = wait_time
             check_interval = 0.2
             elapsed = 0.0
-            new_output_detected = False
             while elapsed < max_wait:
                 time.sleep(check_interval)
                 elapsed += check_interval
                 current_new_output = session.get_new_output(mark_position=False)
                 if current_new_output and current_new_output.strip():
-                    new_output_detected = True
                     time.sleep(0.3)
                     break
 
-            counter_key = f"session_input_{resolved_session_id}"
-            if counter_key not in SESSION_OUTPUT_COUNTER:
-                SESSION_OUTPUT_COUNTER[counter_key] = 0
-            SESSION_OUTPUT_COUNTER[counter_key] += 1
-
-            env_type = "Local"
-            if session.container_id:
-                env_type = f"Container({session.container_id[:12]})"
-            elif session.ctf:
-                env_type = "CTF"
-
             label = getattr(session, 'friendly_id', None) or resolved_session_id
-            session_args = {
-                "command": command, "args": "", "session_id": session_id,
-                "call_counter": SESSION_OUTPUT_COUNTER[counter_key],
-                "input_to_session": True, "environment": env_type,
-            }
-            if args and isinstance(args, dict) and "auto_output" in args:
-                session_args["auto_output"] = args["auto_output"]
-            else:
-                session_args["auto_output"] = True
-
             output = session.get_new_output(mark_position=True)
-            try:
-                full_state = session.get_output(clear=False)
-            except Exception:
-                full_state = output
-
-            execution_info = {
-                "status": "completed", "environment": env_type,
-                "host": session.workspace_dir, "session_id": label,
-                "wait_time": elapsed, "new_output_detected": new_output_detected,
-            }
-
-            from pks.util import cli_print_tool_output
-            cli_print_tool_output(
-                tool_name="generic_linux_command",
-                args={**session_args, "full_state": full_state, "new_output": output},
-                output=output, execution_info=execution_info,
-                token_info=_get_agent_token_info(), streaming=False,
-            )
 
             if not async_mode:
                 stop_active_timer(); start_idle_timer()

@@ -4,6 +4,7 @@ Module for PKS REPL prompt functionality.
 
 import shutil
 import sys
+import textwrap
 import time
 from functools import lru_cache
 from prompt_toolkit import PromptSession, print_formatted_text  # pylint: disable=import-error
@@ -21,10 +22,11 @@ PKS_GREEN = "#58F9FF"
 
 # Headless REPL input placeholder (grey italic when buffer empty; prompt_toolkit CLI only).
 REPL_INPUT_PLACEHOLDER = "Ask your question..."
-INPUT_PURPLE_BG = "#4d3a80"
+INPUT_PURPLE_BG = "#332653"
 INPUT_PURPLE_FG = "#ffffff"
 INPUT_BORDER = "#3f4652"
 INPUT_MUTED = "#778195"
+COMPLETION_MENU_ROWS = 8
 
 _REPL_STDIN_EXHAUSTED_PENDING = False
 
@@ -133,6 +135,13 @@ def _wrapped_input_rows(text: str, terminal_width: int) -> int:
     return max(1, rows)
 
 
+def _completion_menu_rows(session: PromptSession) -> int:
+    state = session.default_buffer.complete_state
+    if state is None:
+        return 0
+    return min(COMPLETION_MENU_ROWS, len(state.completions))
+
+
 def _install_prompt_layout(session: PromptSession, toolbar_func) -> None:
     """Keep the input footer next to the buffer and pin system status at the bottom."""
     from prompt_toolkit.filters import is_done, renderer_height_is_known
@@ -149,6 +158,7 @@ def _install_prompt_layout(session: PromptSession, toolbar_func) -> None:
             session.default_buffer.text,
             terminal.columns,
         )
+        rows += _completion_menu_rows(session)
         return Dimension.exact(min(rows, max(3, terminal.lines - 8)))
 
     input_window.height = _input_height
@@ -170,12 +180,40 @@ def _install_prompt_layout(session: PromptSession, toolbar_func) -> None:
 
 
 def _submitted_user_message(value: str):
+    from prompt_toolkit.utils import get_cwidth
+
+    max_box_width = max(8, _terminal_width() - get_cwidth("🤡 ") - 1)
+    content_width = max(1, max_box_width - get_cwidth(" ❯  "))
+    rows = []
+    for line in value.splitlines() or [value]:
+        rows.extend(
+            textwrap.wrap(
+                line,
+                width=content_width,
+                replace_whitespace=False,
+                drop_whitespace=True,
+                break_long_words=True,
+                break_on_hyphens=False,
+            )
+            or [""]
+        )
+
+    prefixes = [" ❯ ", *(["   "] * (len(rows) - 1))]
+    box_width = max(
+        get_cwidth(prefix) + get_cwidth(line) + 1
+        for prefix, line in zip(prefixes, rows)
+    )
     fragments = [("", "🤡 ")]
-    lines = value.splitlines() or [value]
-    for index, line in enumerate(lines):
+    for index, (prefix, line) in enumerate(zip(prefixes, rows)):
         if index:
             fragments.extend([("", "\n   ")])
-        fragments.append(("class:user-message", f" ❯ {line} "))
+        row = f"{prefix}{line}"
+        fragments.append(
+            (
+                "class:user-message",
+                row + (" " * (box_width - get_cwidth(row))),
+            )
+        )
     return FormattedText(fragments)
 
 

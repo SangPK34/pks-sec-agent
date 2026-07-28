@@ -232,4 +232,9 @@ class Agent(Generic[TContext]):
     async def get_all_tools(self) -> list[Tool]:
         """All agent tools, including MCP tools and function tools."""
         mcp_tools = await self.get_mcp_tools()
-        return mcp_tools + self.tools
+        tools = mcp_tools + self.tools
+        if not any(tool.name == "view_image" for tool in tools):
+            from pks.tools.vision import view_image
+
+            tools.append(view_image)
+        return tools

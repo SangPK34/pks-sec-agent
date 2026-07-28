@@ -258,7 +258,7 @@ def _green_head(console: Console, title: str) -> None:
 
 
 def _promo_section_head(console: Console, title: str) -> None:
-    """Section label — same amber accent as banner YOLO / ``--unrestricted`` promos."""
+    """Section label — same amber accent as the banner YOLO promo."""
     console.print(Text(title, style=BANNER_PROMO_YELLOW))
 
 

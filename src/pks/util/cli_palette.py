@@ -20,7 +20,7 @@ PIPE_GREY = "#888888"
 # Wizard / continuous-ops headings (warm brown, stays within green-grey brand lane)
 WIZARD_BROWN = "#b89f6a"
 
-# Same accent as ``repl.ui.banner`` YOLO / ``--unrestricted`` promo lines (amber on most terminals)
+# Same accent as the ``repl.ui.banner`` YOLO promo line (amber on most terminals)
 BANNER_PROMO_YELLOW = "bold yellow"
 
 # Pills

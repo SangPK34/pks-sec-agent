@@ -26,4 +26,6 @@ def test_handoff_task_is_preserved_as_specialist_input():
 
     assert isinstance(filtered.input_history, str)
     assert "Inspect /tmp/sample with file and wc first." in filtered.input_history
+    assert "original operator request remains canonical" in filtered.input_history
+    assert "authoritative for this turn" not in filtered.input_history
     assert filtered.new_items == ()

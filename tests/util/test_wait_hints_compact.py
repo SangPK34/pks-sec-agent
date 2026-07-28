@@ -8,7 +8,7 @@ from rich.text import Text
 
 import pks.util.streaming as streaming
 import pks.util.wait_hints as wait_hints
-from pks.output import TaskRecord
+from pks.output import TaskRecord, VisionCompleteEvent
 from pks.repl.ui.compact_renderer import CompactCLIHandler, _row_for_record
 from pks.util.hint_renderables import build_model_wait_hint_renderable
 
@@ -42,6 +42,91 @@ def test_clear_wait_hints_removes_published_body():
     wait_hints.clear_wait_hints()
 
     assert wait_hints.get_current_wait_hint_body() is None
+
+
+def test_vision_activity_overlay_and_completion_row() -> None:
+    wait_hints.set_model_activity_overlay("vision-test", "Inspecting 1 image with Vision…")
+    try:
+        assert "Inspecting 1 image with Vision…" in wait_hints._model_body(0.0, {})
+    finally:
+        wait_hints.set_model_activity_overlay("vision-test", None)
+
+    output = StringIO()
+    handler = CompactCLIHandler(
+        Console(file=output, force_terminal=False, width=100)
+    )
+    handler.handle(
+        VisionCompleteEvent(
+            image_count=1,
+            image_paths=("/tmp/fixed.png",),
+            mode="vision_ocr",
+            duration_seconds=1.25,
+        )
+    )
+
+    rendered = output.getvalue()
+    assert "• Viewed Image" in rendered
+    assert "/tmp/fixed.png" in rendered
+
+
+def test_vision_completion_renders_each_image_and_does_not_restart_live(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = StringIO()
+    handler = CompactCLIHandler(
+        Console(file=output, force_terminal=False, width=100)
+    )
+    monkeypatch.setattr(handler, "_stop_live", lambda **_kwargs: True)
+    monkeypatch.setattr(
+        handler,
+        "_start_live",
+        lambda: pytest.fail("Vision completion must not restore stale animation"),
+    )
+
+    handler.handle(
+        VisionCompleteEvent(
+            image_count=3,
+            image_paths=("/tmp/a.png", "/tmp/b.png", "/tmp/c.png"),
+            mode="vision",
+            duration_seconds=7.0,
+        )
+    )
+
+    lines = output.getvalue().splitlines()
+    assert len(lines) == 9
+    assert lines[0] == "• Viewed Image"
+    assert "/tmp/a.png" in lines[1]
+    assert lines[2] == ""
+    assert lines[3] == "• Viewed Image"
+    assert "/tmp/b.png" in lines[4]
+    assert lines[5] == ""
+    assert lines[6] == "• Viewed Image"
+    assert "/tmp/c.png" in lines[7]
+    assert lines[8] == ""
+
+
+def test_vision_completion_prints_all_rows_atomically(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handler = CompactCLIHandler(
+        Console(file=StringIO(), force_terminal=False, width=100)
+    )
+    rendered = []
+    monkeypatch.setattr(handler, "_stop_live", lambda **_kwargs: False)
+    monkeypatch.setattr(
+        handler._console,
+        "print",
+        lambda renderable: rendered.append(renderable),
+    )
+
+    handler.handle(
+        VisionCompleteEvent(
+            image_count=2,
+            image_paths=("/tmp/a.png", "/tmp/b.png"),
+        )
+    )
+
+    assert len(rendered) == 1
 
 
 @pytest.mark.asyncio

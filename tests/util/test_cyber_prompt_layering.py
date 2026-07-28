@@ -15,6 +15,7 @@ from pks.util.prompts import (
     _compose_cyber_layered_prompt,
     _load_micro_profile_text,
     _upsert_compacted_memory_block,
+    apply_compacted_memory_to_agent,
     create_system_prompt_renderer,
     load_prompt_template,
 )
@@ -26,7 +27,6 @@ def test_compose_cyber_layering_disabled_returns_base_only(monkeypatch: pytest.M
         out = _compose_cyber_layered_prompt(
             "BASE_ONLY_MARKER",
             None,
-            unrestricted=False,
             cyber_micro_profile_key="redteam",
         )
         assert out == "BASE_ONLY_MARKER"
@@ -37,12 +37,10 @@ def test_compose_cyber_layering_disabled_returns_base_only(monkeypatch: pytest.M
 def test_compose_full_includes_baseline_and_micro(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PKS_CYBER_PROFILE", "true")
     monkeypatch.setenv("PKS_CYBER_PROFILE_MODE", "full")
-    monkeypatch.delenv("PKS_UNRESTRICTED", raising=False)
     try:
         out = _compose_cyber_layered_prompt(
             "TAIL_BASE_MARKER",
             None,
-            unrestricted=False,
             cyber_micro_profile_key="selection",
         )
         assert "PKS CYBER BASELINE" in out
@@ -60,7 +58,6 @@ def test_compose_lite_uses_lite_baseline(monkeypatch: pytest.MonkeyPatch) -> Non
         out = _compose_cyber_layered_prompt(
             "X",
             None,
-            unrestricted=False,
             cyber_micro_profile_key="ctf",
         )
         assert "PKS CYBER BASELINE (LITE)" in out
@@ -77,7 +74,6 @@ def test_compose_mode_off_env_value(monkeypatch: pytest.MonkeyPatch) -> None:
         out = _compose_cyber_layered_prompt(
             "PLAIN",
             None,
-            unrestricted=False,
             cyber_micro_profile_key="web",
         )
         assert out == "PLAIN"
@@ -100,7 +96,6 @@ def test_compose_representative_micro_keys(
         out = _compose_cyber_layered_prompt(
             f"MARKER_{key}",
             None,
-            unrestricted=False,
             cyber_micro_profile_key=key,
         )
         assert f"MARKER_{key}" in out
@@ -122,7 +117,6 @@ def test_every_micro_profile_registry_key_composes(monkeypatch: pytest.MonkeyPat
             composed = _compose_cyber_layered_prompt(
                 "END_MARKER",
                 None,
-                unrestricted=False,
                 cyber_micro_profile_key=profile_key,
             )
             assert "END_MARKER" in composed
@@ -202,6 +196,26 @@ def test_master_uses_pks_runtime_policy_names(monkeypatch: pytest.MonkeyPatch) -
     assert "Attacker machine information:" not in rendered
 
 
+def test_master_keeps_authorization_bound_to_each_mission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PKS_ENV_CONTEXT", "false")
+    monkeypatch.setenv("PKS_BLACKBOARD", "false")
+    agent = SimpleNamespace(
+        name="CTF agent",
+        model=SimpleNamespace(_current_plan=None),
+    )
+    run_context = SimpleNamespace(context_variables={})
+
+    rendered = create_system_prompt_renderer("BASE", "ctf")(run_context, agent)
+
+    assert rendered.count("<mission_authorization_contract>") == 1
+    assert "Handoffs change task ownership, not scope." in rendered
+    assert "must never broaden the current mission" in rendered
+    assert "Within explicit mission boundaries, authorization is complete." in rendered
+    assert "Never invent scope" in rendered
+
+
 def test_compacted_memory_migrates_legacy_marker() -> None:
     legacy = (
         "BASE\n\n<cai_compacted_memory>\nOLD SUMMARY\n"
@@ -214,3 +228,35 @@ def test_compacted_memory_migrates_legacy_marker() -> None:
     assert rendered.count("<pks_compacted_memory>") == 1
     assert "OLD SUMMARY" not in rendered
     assert "NEW SUMMARY" in rendered
+
+
+def test_standard_renderer_injects_compacted_memory_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pks.repl.commands.memory import COMPACTED_SUMMARIES
+
+    marker = "UNIQUE_COMPACTED_MEMORY_MARKER"
+    agent_name = "Memory regression agent"
+    previous = COMPACTED_SUMMARIES.get(agent_name)
+    monkeypatch.setenv("PKS_COMPACTED_MEMORY", "true")
+    monkeypatch.setenv("PKS_ENV_CONTEXT", "false")
+    monkeypatch.setenv("PKS_BLACKBOARD", "false")
+    COMPACTED_SUMMARIES[agent_name] = [marker]
+    try:
+        agent = SimpleNamespace(
+            name=agent_name,
+            model=SimpleNamespace(_current_plan=None),
+        )
+        agent.instructions = create_system_prompt_renderer("BASE", "ctf")
+
+        apply_compacted_memory_to_agent(agent)
+        rendered = agent.instructions(SimpleNamespace(context_variables={}), agent)
+
+        assert rendered.count(marker) == 1
+        assert rendered.count("<compacted_context>") == 1
+        assert "<pks_compacted_memory>" not in rendered
+    finally:
+        if previous is None:
+            COMPACTED_SUMMARIES.pop(agent_name, None)
+        else:
+            COMPACTED_SUMMARIES[agent_name] = previous

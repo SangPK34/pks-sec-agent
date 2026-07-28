@@ -50,7 +50,7 @@ orchestration_agent = Agent(
     ),
     instructions=create_system_prompt_renderer(
         _orchestration_system_prompt,
-        cyber_micro_profile_key="selection",
+        cyber_micro_profile_key="orchestration",
     ),
     tools=_tools,
     handoffs=[],

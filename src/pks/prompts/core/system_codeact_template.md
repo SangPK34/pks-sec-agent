@@ -1,6 +1,5 @@
 <%
     import os
-    from pks import is_caiextensions_memory_available
 
     # Get system prompt from agent if provided
     system_prompt = (
@@ -11,10 +10,6 @@
 
     # Get CTF_INSIDE environment variable
     ctf_inside = os.getenv('CTF_INSIDE')
-    artifacts = None
-    if is_caiextensions_memory_available() and os.getenv('CTF_NAME'):
-        from caiextensions.memory import get_artifacts
-        artifacts = get_artifacts(os.getenv('CTF_NAME').lower())
 %>
 
 ${system_prompt}

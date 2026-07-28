@@ -43,6 +43,7 @@ from __future__ import annotations
 import os
 import threading
 import time
+from pathlib import Path
 
 from rich.console import Console, Group, RenderableType
 from rich.live import Live
@@ -61,6 +62,7 @@ from pks.output import (
     TaskUpdateEvent,
     TurnStartEvent,
     TurnSummaryEvent,
+    VisionCompleteEvent,
 )
 from pks.util.cli_palette import (
     PKS_GREEN,
@@ -375,6 +377,8 @@ class CompactCLIHandler:
             self._on_turn_start(event)
         elif isinstance(event, TurnSummaryEvent):
             self._on_turn_summary(event)
+        elif isinstance(event, VisionCompleteEvent):
+            self._on_vision_complete(event)
 
     def flush(self) -> None:
         self._dismiss_live()
@@ -489,6 +493,35 @@ class CompactCLIHandler:
         # model's markdown conclusion — task rows are ephemeral by design.
         self._dismiss_live()
         self._print_worked_note()
+
+    def _on_vision_complete(self, event: VisionCompleteEvent) -> None:
+        lines: list[Text] = []
+        has_paths = bool(event.image_paths)
+        paths = event.image_paths or tuple(
+            "attached image" for _ in range(event.image_count)
+        )
+        for index, path in enumerate(paths):
+            lines.append(Text("• Viewed Image", style="bold #58F9FF"))
+            detail = Text("  └ ", style=GREY_HINT)
+            if not has_paths:
+                detail.append(path)
+            else:
+                try:
+                    resolved = Path(path).resolve()
+                    target = resolved.as_uri()
+                    try:
+                        display = str(resolved.relative_to(Path.home()))
+                    except ValueError:
+                        display = str(resolved)
+                    detail.append(display, style=f"link {target}")
+                except (OSError, ValueError):
+                    detail.append(path)
+            lines.append(detail)
+            if index < len(paths) - 1:
+                lines.append(Text())
+        lines.append(Text())
+        self._stop_live(release_ownership=False)
+        self._console.print(Group(*lines))
 
     def _print_thought_note(self) -> None:
         if self._thought_printed:

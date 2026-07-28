@@ -76,6 +76,14 @@ from pks.errors import (
 )
 from pks.sdk.agents.models.chatcompletions.httpx_client import verbose_http_retries
 from pks.continuation import generate_continuation_advice, should_continue_automatically
+from pks.util.vision import (
+    PreparedVisionInput,
+    compact_vision_history,
+    input_has_images,
+    is_vision_rejection,
+    prepare_agent_vision_input,
+    remove_pending_vision_history,
+)
 from litellm.exceptions import RateLimitError, Timeout
 
 import pks.cli_setup as _setup  # access CTF globals
@@ -1378,17 +1386,48 @@ def _record_shared_turn_context(result) -> None:
 
 def _run_single_agent(agent, conversation_input, console, force_until_flag, ctf_global):
     stream = _get_config().stream  # [S] centralised config
+    prepared = (
+        prepare_agent_vision_input(conversation_input, agent)
+        if isinstance(conversation_input, str)
+        else PreparedVisionInput("", conversation_input)
+    )
 
     # Compact REPL: wrap the entire turn with TurnStart/TurnSummary events so
     # the live block is guaranteed to collapse between turns. No-op when
     # compact mode is disabled (PKS_COMPACT_REPL=0) or in TUI mode.
     from pks.repl.ui.compact_wiring import turn_lifecycle
 
+    result = None
     with turn_lifecycle(user_input=str(conversation_input or "")):
-        if stream:
-            _run_streamed(agent, conversation_input, console, force_until_flag, ctf_global)
-        else:
-            _run_non_streamed(agent, conversation_input, console, force_until_flag, ctf_global)
+        run_turn = _run_streamed if stream else _run_non_streamed
+        try:
+            result = run_turn(
+                agent,
+                prepared.model_input,
+                console,
+                force_until_flag,
+                ctf_global,
+            )
+        except Exception as exc:
+            if not prepared.has_images or not is_vision_rejection(exc):
+                raise
+            remove_pending_vision_history(agent, prepared)
+            console.print(
+                "[dim]Model hiện tại không nhận ảnh; PKS đang fallback sang OCR…[/dim]"
+            )
+            result = run_turn(
+                agent,
+                prepared.ocr_fallback_input(),
+                console,
+                force_until_flag,
+                ctf_global,
+            )
+        finally:
+            last_agent = getattr(result, "last_agent", None)
+            if prepared.has_images:
+                compact_vision_history(agent, prepared)
+                if last_agent is not None and last_agent is not agent:
+                    compact_vision_history(last_agent, prepared)
 
 
 def _run_streamed(agent, conversation_input, console, force_until_flag, ctf_global):
@@ -1451,6 +1490,7 @@ def _run_streamed(agent, conversation_input, console, force_until_flag, ctf_glob
                     pass
             raise
         except Exception as e:
+            vision_rejected = input_has_images(conversation_input) and is_vision_rejection(e)
             if stream_iterator is not None:
                 try:
                     await stream_iterator.aclose()
@@ -1461,6 +1501,8 @@ def _run_streamed(agent, conversation_input, console, force_until_flag, ctf_glob
                     result._cleanup_tasks()
                 except Exception:
                     pass
+            if vision_rejected:
+                raise
             logger = logging.getLogger(__name__)
             logger.error(f"Error occurred during streaming: {str(e)}", exc_info=True)
             if _get_config().debug == 2:
@@ -1507,6 +1549,7 @@ def _run_streamed(agent, conversation_input, console, force_until_flag, ctf_glob
             raise
 
     _record_shared_turn_context(completed_result)
+    return completed_result
 
 
 def _run_non_streamed(agent, conversation_input, console, force_until_flag, ctf_global):
@@ -1559,7 +1602,7 @@ def _run_non_streamed(agent, conversation_input, console, force_until_flag, ctf_
         pass
 
     if response is None:
-        return
+        return None
 
     try:
         from pks.util import sanitize_message_list as fix_message_list
@@ -1567,6 +1610,7 @@ def _run_non_streamed(agent, conversation_input, console, force_until_flag, ctf_
     except Exception:
         pass
     _record_shared_turn_context(response)
+    return response
 
 
 # ---------------------------------------------------------------------------

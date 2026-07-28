@@ -107,6 +107,16 @@ class StatusEvent(OutputEvent):
 
 
 @dataclass
+class VisionCompleteEvent(OutputEvent):
+    """Visual input preparation/inspection has completed."""
+
+    image_count: int = 0
+    image_paths: tuple[str, ...] = ()
+    mode: str = "vision"
+    duration_seconds: float = 0.0
+
+
+@dataclass
 class AgentHandoffEvent(OutputEvent):
     """Agent handoff occurred."""
 
@@ -298,6 +308,47 @@ class CLIOutputHandler:
                 if self._rich
                 else f"[{event.level.upper()}] {event.message}"
             )
+        elif isinstance(event, VisionCompleteEvent):
+            if self._rich and self._console:
+                from rich.console import Group
+                from rich.text import Text
+
+                has_paths = bool(event.image_paths)
+                paths = event.image_paths or tuple(
+                    "attached image" for _ in range(event.image_count)
+                )
+                lines = []
+                for index, path in enumerate(paths):
+                    title = Text("• Viewed Image", style="bold #58F9FF")
+                    detail = Text("  └ ", style="dim")
+                    if not has_paths:
+                        detail.append(path)
+                    else:
+                        try:
+                            resolved = Path(path).resolve()
+                            target = resolved.as_uri()
+                            try:
+                                display = str(resolved.relative_to(Path.home()))
+                            except ValueError:
+                                display = str(resolved)
+                            detail.append(display, style=f"link {target}")
+                        except (OSError, ValueError):
+                            detail.append(path)
+                    lines.extend((title, detail))
+                    if index < len(paths) - 1:
+                        lines.append(Text())
+                lines.append(Text())
+                self._console.print(Group(*lines), highlight=False)
+            else:
+                paths = event.image_paths or tuple(
+                    "attached image" for _ in range(event.image_count)
+                )
+                for index, path in enumerate(paths):
+                    self._print("• Viewed Image")
+                    self._print(f"  └ {path}")
+                    if index < len(paths) - 1:
+                        self._print("")
+                self._print("")
         elif isinstance(event, AgentHandoffEvent):
             self._print(
                 f"[bold magenta]>> Handoff: {event.from_agent} -> {event.to_agent}[/bold magenta]"
