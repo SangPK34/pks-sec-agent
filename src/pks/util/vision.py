@@ -33,7 +33,11 @@ _PATH_PATTERN = re.compile(
 )
 _TOOL_IMAGE_PATTERN = re.compile(
     r"(?mi)^\s*(?:\|\s*)?(?P<path>[^:\r\n]+?):\s+"
-    r"(?:JPEG|PNG|GIF|WEBP|TIFF|BMP)\s+image data\b"
+    r"(?:"
+    r"(?:JPEG|PNG|GIF|TIFF)\s+image data\b"
+    r"|PC bitmap\b"
+    r"|RIFF\b[^\r\n]*\bWeb/P image\b"
+    r")"
 )
 
 

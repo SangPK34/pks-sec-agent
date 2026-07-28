@@ -92,12 +92,27 @@ def test_find_local_image_paths_accepts_wsl_explorer_path() -> None:
         image_path.unlink(missing_ok=True)
 
 
-def test_tool_image_detection_accepts_extensionless_file(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("image_format", "tool_description"),
+    [
+        ("JPEG", "JPEG image data, JFIF standard 1.01, 20x10"),
+        ("PNG", "PNG image data, 20 x 10, 8-bit/color RGB"),
+        ("GIF", "GIF image data, version 87a, 20 x 10"),
+        ("TIFF", "TIFF image data, little-endian, width=20, height=10"),
+        ("BMP", "PC bitmap, Windows 3.x format, 20 x 10 x 24"),
+        ("WEBP", "RIFF (little-endian) data, Web/P image, VP8 encoding, 20x10"),
+    ],
+)
+def test_tool_image_detection_accepts_extensionless_file(
+    tmp_path: Path,
+    image_format: str,
+    tool_description: str,
+) -> None:
     image_path = tmp_path / "file"
-    Image.new("RGB", (20, 10), "white").save(image_path, "JPEG")
+    Image.new("RGB", (20, 10), "white").save(image_path, image_format)
 
     paths = find_tool_image_paths(
-        "file: JPEG image data, JFIF standard 1.01, 20x10",
+        f"file: {tool_description}",
         (tmp_path,),
     )
     prepared = prepare_image_artifacts(paths)
