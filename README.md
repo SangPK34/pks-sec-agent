@@ -1,80 +1,58 @@
-# PKS — Đội AI an ninh mạng trong terminal 🕵️
-
-> *Burp is slow, Metasploit is old, and PKS is gold* 🤡
-
-> Tool không build từ code, tool build bằng cà phê, Sting dâu và những bài lab thiếu
-> tài liệu, vận hành bởi 30+ con agent tranh nhau một bộ nhớ chung. Tự động fuzz web,
-> đánh nhau với binary, đọc flag trước khi mì tôm kịp chín. **Mục đích chính:** giải CTF.
-> **Mục đích phụ:** phá đám admin hoặc chặn những thằng phá đám khác. Khi lệnh `pks` gõ
-> xuống, pass hay không không quan trọng — quan trọng là niềm tin. *Run and dream...*
-
-**PKS** (tên thân mật *"Tool Nhà Nghèo"*) là một AI **đa agent, tự động** cho an ninh
-mạng — cả tấn công lẫn phòng thủ — chạy hoàn toàn trong terminal. Một Selection agent
-điều phối mỗi tác vụ tới đúng chuyên gia — pentest, bug bounty, red team, blue team,
-DFIR, reverse engineering, web, recon, reporting — và tất cả dùng chung một bộ nhớ. Kèm
-theo **chế độ CTF** tự giải pwn / reverse / web / forensic / crypto từ đầu đến cuối.
-
-> ⚖️ **Chỉ dùng khi được phép** — pentest có hợp đồng, hệ thống của chính bạn, môi
-> trường lab, thi CTF, và học tập/nghiên cứu. Xem mục **Đạo đức sử dụng** ở cuối.
+# Burp is slow, Metasploit is old, and PKS is gold 🤡
+**PKS** là một framework AI agent, tự động cho an ninh mạng — cả tấn công lẫn phòng thủ — chạy hoàn toàn trong terminal. Một `Root agent` điều phối mỗi tác vụ tới đúng chuyên gia: pentest, bug bounty, red team, blue team, DFIR, reverse engineering, web, recon, reporting... Ngoài ra có thể giải CTF pwn / reverse / web / forensic / crypto.
+- Tool không build từ code, tool build bằng cà phê, Sting dâu và những bài lab thiếu tài liệu.  
+- Vận hành bởi 30+ con agent tranh nhau một bộ nhớ chung.  
+- Tự động fuzz web,đánh nhau với binary, chôm flag trước khi mì tôm kịp chín.  
+- Mục đích chính: giải CTF, mục đích phụ: phá đám admin hoặc chặn những đứa phá đám khác.  
+- Khi lệnh `pks` gõ xuống, pass hay không không quan trọng — quan trọng là có niềm tin...  
+> ***Run and dream...***
 
 ---
 
 ## Điểm nổi bật
 
-- **30+ agent chuyên biệt** phủ toàn bộ phổ — tấn công (pentest, bug bounty, red team,
-  web, recon, reverse) và phòng thủ (blue team, DFIR, điều tra memory/network, purple
-  team, reporting, compliance) — cộng thêm một **agent giải CTF** riêng (pwn · reverse ·
-  web · forensic · crypto) với đầy đủ toolbox nằm sẵn trong "playbook".
-- **Bộ nhớ chung (blackboard)** — mọi lệnh và phát hiện của bất kỳ agent nào đều được ghi
-  lên một bảng chung, nhồi vào ngữ cảnh của mọi agent. Hỏi *"nãy giờ tìm được gì rồi?"* là
-  nó trả lời chính xác, kể cả sau khi chuyển agent, bị ngắt, hay nén ngữ cảnh.
+- **30+ agent chuyên biệt** phủ toàn bộ phổ — tấn công (pentest, bug bounty, red team, web, recon, reverse) và phòng thủ (blue team, DFIR, điều tra memory/network, purple team, reporting, compliance) — Có agent giải CTF (pwn · reverse · web · forensic · crypto) với đầy đủ toolbox nằm sẵn trong "playbook".
+- **Bộ nhớ chung (blackboard)** — mọi lệnh và phát hiện của bất kỳ agent nào đều được ghi lên một `note_finding` chung, đưa vào ngữ cảnh của mọi agent, giúp các agent hiểu được ngữ cảnh của nhau kể cả sau khi chuyển agent, bị ngắt, hay nén ngữ cảnh.
 - **Tự động** — không hỏi xác nhận giữa chừng; cứ chạy tới khi xong hoặc bạn dừng.
-- **Đọc được chữ trong ảnh** — `pks-ocr` OCR đa lượt + đối chiếu chéo để moi flag/bằng
-  chứng từ ảnh chụp ngay cả khi model không có "mắt".
-- **Gọn & nhanh** — cắt output tool thông minh (giữ flag/key, bỏ nhiễu), ước lượng token
-  nhanh, render markdown chịu lỗi, tự nhận diện cửa sổ ngữ cảnh theo từng model.
-- **Chạy nhiều mục tiêu cùng lúc** — mỗi mục tiêu/challenge một instance riêng, không lẫn.
-- **Riêng tư mặc định** — không telemetry, không gửi dữ liệu ra ngoài, không thu thập.
-- **Trả lời bạn bằng tiếng Việt.**
+- **Đọc được chữ trong ảnh** — `pks-ocr` OCR đa lượt + đối chiếu chéo để moi flag/bằng chứng từ ảnh chụp ngay cả khi model không có "mắt".
+- **Gọn & nhanh** — cắt output tool thông minh (giữ flag/key, bỏ nhiễu), ước lượng token nhanh, render markdown chịu lỗi, tự nhận diện cửa sổ ngữ cảnh theo từng model.
+- **Chạy nhiều mục tiêu cùng lúc** — mỗi mục tiêu/challenge một instance riêng, không đụng nhau.
 
 ---
 
 ## Yêu cầu
 
-- **Linux / WSL** (khuyên dùng Kali Linux — hầu hết công cụ đã cài sẵn).
+- **Linux / WSL** (nên dùng Kali Linux — nhiều công cụ hỗ trợ).
 - **Python 3.10+** (khuyên 3.13).
-- **Một endpoint LLM tương thích OpenAI.** PKS không kèm model; nó nói chuyện với bất kỳ
-  API tương thích OpenAI nào — gateway local (LiteLLM / vLLM / Ollama chế độ openai) hoặc
-  endpoint hosted. Bạn tự cấp URL, key và tên model trong `.env`.
+- **Một endpoint LLM tương thích.** Bạn tự cấu hình trong file `.env`.
 
 ---
 
-## Cài đặt — tải về, sửa `.env`, chạy
+## Cài đặt 
 
 ```bash
-# 1. Lấy code
-git clone <your-repo-url> pks-sec-agent     # hoặc copy nguyên thư mục
+# 1. Clone source
+git clone https://github.com/SangPK34/pks-sec-agent.git   
 cd pks-sec-agent
 
 # 2. Tạo virtualenv và cài PKS + phụ thuộc
 python3 -m venv venv
 source venv/bin/activate
-pip install -e .                            # bước này tạo ra lệnh `pks`
+pip install -e .    
 
-# 3. Cấu hình — BƯỚC DUY NHẤT để chạy được
+# 3. Cấu hình LLM
 cp .env.example .env
-nano .env                                   # điền OPENAI_API_KEY, OPENAI_API_BASE, PKS_MODEL
+nano .env                # điền API_KEY, BASE_URL, MODEL..
 
-# 4. Chạy
+# 4. Boot
 pks
 ```
 
-Vậy là xong — sửa 3 giá trị trong `.env` là `pks` khởi động.
 
 **Đã có sẵn venv?** bỏ qua bước 2, dùng script kèm theo (tự set `PYTHONPATH` và nạp `.env`):
 
 ```bash
-./run_pks.sh            # sửa đường dẫn venv bên trong script cho khớp máy bạn
+./run_pks.sh        # sửa đường dẫn venv trong script cho khớp của bạn
 ```
 
 **Toolbox:** để làm việc thật PKS gọi các công cụ hệ thống (`nmap`, `ffuf`, `sqlmap`,
@@ -86,15 +64,12 @@ Vậy là xong — sửa 3 giá trị trong `.env` là `pks` khởi động.
 ## Sử dụng
 
 ```bash
-pks                       # mở REPL, rồi mô tả tác vụ bất kỳ
+pks                      # mở REPL, rồi mô tả tác vụ bất kỳ
 pks --yolo               # bỏ xác nhận lệnh nhạy cảm (tự động hoàn toàn)
-pks --unrestricted       # bật steering (uncensored) trên endpoint của bạn
-pks --prompt "recon và liệt kê dịch vụ trên 10.10.10.5"   # chạy 1 tác vụ rồi thôi
+pks --prompt "<your prompt>"   # chạy 1 tác vụ rồi thôi
 ```
 
-Cứ mô tả điều bạn muốn — *"pentest con máy này"*, *"triage mục tiêu bug bounty"*,
-*"điều tra bản dump memory này"*, *"giải bài CTF trong ./chall"* — Selection agent sẽ giao
-cho đúng chuyên gia. Lệnh hữu ích: `/agent` (liệt kê/đổi agent), `/model`, `/env`,
+Một số lệnh hữu ích: `/agent` (liệt kê/đổi agent), `/model`, `/env`,
 `/parallel` (chạy nhiều agent trên cùng một mục tiêu).
 
 ### Chạy nhiều mục tiêu cùng lúc
@@ -111,7 +86,7 @@ cd ~/CTF/chall1   && pks     # terminal 3
 Theo dõi tất cả từ một terminal khác:
 
 ```bash
-watch -n5 'grep -h FLAG ~/.pks/bb_*.json 2>/dev/null || echo "chưa xác nhận gì"'
+watch -n5 'grep -h FLAG ~/.pks/bb_*.json 2>/dev/null || echo "no findings"
 ```
 
 ---
@@ -123,9 +98,9 @@ watch -n5 'grep -h FLAG ~/.pks/bb_*.json 2>/dev/null || echo "chưa xác nhận 
 | `OPENAI_API_KEY` | key cho endpoint LLM của bạn **(bắt buộc)** |
 | `OPENAI_API_BASE` / `OPENAI_BASE_URL` | URL endpoint tương thích OpenAI **(bắt buộc)** |
 | `PKS_MODEL` | tên model endpoint của bạn phục vụ **(bắt buộc)** |
-| `PKS_LICENSE_OFF=1` | chế độ mở — không kiểm license, không gửi dữ liệu ra ngoài |
-| `PKS_STREAM=true` | stream output của model |
-| `PKS_TUI=false` | dùng REPL compact (không dùng TUI nặng) |
+| `PKS_LICENSE_OFF=1` | chế độ mở, không kiểm tra license|
+| `PKS_STREAM=true` | stream phản hồi của model thời gian thực|
+| `PKS_TUI=false` | dùng REPL compact (Nhẹ hơn TUI) |
 | `PKS_TELEMETRY=false` | tắt telemetry |
 | `PKS_COMPACT_REPL=0` | `0` hiện output tool inline; `1` gom thành pill |
 | `PKS_CYBER_PROFILE_MODE` | cỡ baseline cyber: `lite` \| `full` \| `off` |
@@ -140,20 +115,22 @@ instance) được ghi trong `.env.example`.
 ```
 src/pks/          framework (agents, tools, prompts, SDK, REPL/TUI)
 src/pks/prompts/  playbook của từng agent (CTF, DFIR, reverse, web, red/blue team, …)
-pricings/         bảng cửa sổ ngữ cảnh / pricing theo model
 tools/            tiện ích replay / asciinema / gif
 tests/            bộ test
 run_pks.sh        launcher (set PYTHONPATH, nạp .env)
-.env.example      copy sang .env rồi sửa
+.env.example      mẫu, copy sang .env rồi sửa
 ```
 
 ---
+## Demo mini CTF
 
-## Đạo đức sử dụng
+<img width="1734" height="994" alt="Screenshot 2026-07-27 084531" src="https://github.com/user-attachments/assets/6e762fc4-f89f-4323-890c-22ee5413767f" />
 
-PKS là công cụ an ninh mạng lưỡng dụng. Chỉ dùng ở nơi bạn **được phép rõ ràng**: các
-engagement có hợp đồng, hệ thống của chính bạn, môi trường lab, các giải CTF, và học
-tập/nghiên cứu có sự cho phép. Bạn chịu trách nhiệm cho cách mình sử dụng.
+<img width="1400" height="996" alt="Screenshot 2026-07-27 084945" src="https://github.com/user-attachments/assets/3824bce9-9a50-48e3-9143-208382ab83c0" />
+
+## Vấn đề đạo đức
+
+PKS là công cụ an ninh mạng chỉ được sử dụng với những mục tiêu **được cấp phép**: các engagement có hợp đồng, hệ thống của bạn, môi trường lab, các giải CTF, và học tập/nghiên cứu. Bạn sẽ phải chịu trách nhiệm cho cách sử dụng của mình.
 
 ## Giấy phép
 
@@ -161,4 +138,4 @@ Giấy phép kép (MIT và Proprietary) — xem `LICENSE` / `LICENSE-MIT`.
 
 ---
 
-<sub>*Customized from CAI.*</sub>
+<sub>*Customized from cai.*</sub>
