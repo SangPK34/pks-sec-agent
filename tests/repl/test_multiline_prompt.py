@@ -116,6 +116,14 @@ class TestMultilinePromptConfig:
         submitted = _plain(_submitted_user_message("hello"))
         assert submitted.startswith("🤡 ")
         assert "❯ hello" in submitted
+        multiline = _submitted_user_message("first\nsecond")
+        assert _plain(multiline).count("❯") == 1
+        message_rows = [
+            text
+            for style, text, *_ in multiline
+            if style == "class:user-message"
+        ]
+        assert len({len(row) for row in message_rows}) == 1
         toolbar = _system_toolbar(
             lambda: [("ansired", "Model: test | Context: 1%")]
         )
