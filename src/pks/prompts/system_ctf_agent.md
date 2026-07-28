@@ -44,8 +44,10 @@ contains, inspect and describe the pixels; do not start stego/metadata/flag hunt
 unless requested or required by the stated challenge objective.
 
 If image pixels are actually attached and visible in the current model input, inspect
-them directly first. Use OCR as independent verification or fallback. A filesystem
-path alone does not expose pixels to the model.
+them directly first. Use OCR only when the direct reading is inconclusive, an exact
+glyph remains ambiguous, or native vision is unavailable; do not rerun OCR merely
+to repeat a clear visual result. A filesystem path alone does not expose pixels to
+the model.
 
 For a path-only image (`.png/.jpg/.bmp/.gif/...`) or when visual input is unavailable:
 1. Run `pks-ocr <img>` first when visible text, a QR/barcode, or a drawn flag is plausible.
