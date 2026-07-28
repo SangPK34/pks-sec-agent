@@ -41,6 +41,29 @@ MODEL_DELAY_MESSAGES: tuple[str, ...] = (
     "We haven't timed out—we'll keep waiting until we get an answer.",
 )
 
+MODEL_ACTIVITY_MESSAGES: tuple[str, ...] = (
+    "Pondering…",
+    "Contemplating…",
+    "Reasoning…",
+    "Analyzing…",
+    "Investigating…",
+    "Synthesizing…",
+    "Planning…",
+    "Composing…",
+    "Crafting…",
+    "Refining…",
+    "Orchestrating…",
+    "Architecting…",
+    "Calibrating…",
+    "Conjuring…",
+    "Brewing…",
+    "Supercalifragilisting…",
+    "Bibbidibobbidibooing…",
+    "Abracadabraing…",
+    "Hocuspocusing…",
+    "Razzmatazzing…",
+)
+
 TOOL_DELAY_MESSAGES: tuple[str, ...] = (
     "The tool is still running—large output or slow I/O can take a while.",
     "Waiting on the subprocess; disk or network may be the bottleneck.",
@@ -94,6 +117,7 @@ _primary_tool_loop: "_WaitHintLoop | None" = None
 _BODY_LOCK = threading.Lock()
 _current_model_body: str | None = None
 _current_tool_body: str | None = None
+_last_model_wait_duration = 0.0
 # True when the compact REPL live block is rendering. While set:
 #   * mode="model" loops do NOT spawn a Rich Status (compact draws the body)
 #   * mode="tool" loops publish only the plain body; legacy footer refreshes
@@ -124,6 +148,15 @@ def get_current_wait_hint_body() -> str | None:
     if not parts:
         return None
     return "  ·  ".join(parts)
+
+
+def consume_last_model_wait_duration() -> float:
+    """Return and clear the most recently completed primary model wait."""
+    global _last_model_wait_duration
+    with _BODY_LOCK:
+        duration = _last_model_wait_duration
+        _last_model_wait_duration = 0.0
+    return duration
 
 
 def set_compact_live_owner(active: bool) -> None:
@@ -299,22 +332,11 @@ def _model_body(elapsed: float, state: dict[str, Any]) -> str:
     elif state.get("phase") == "tool_result":
         agent_name = state.get("agent_name") or "Agent"
         action = f"{agent_name} đang phân tích kết quả tool…"
-    elif elapsed >= 90.0:
-        phase = int((elapsed - 90.0) // 30.0)
-        if state.get("m_phase") != phase:
-            state["m_phase"] = phase
-            state["m_pick"] = random.choice(MODEL_DELAY_MESSAGES)
-        action = state["m_pick"]
-    elif elapsed >= 60.0:
-        action = "Planning next move…"
-    elif elapsed >= 30.0:
-        action = "Analyzing context…"
-    elif elapsed >= 10.0:
-        action = "Reasoning…"
-    elif elapsed >= 4.0:
-        action = "Thinking…"
     else:
-        action = "Architecting…"
+        action = state.setdefault(
+            "activity",
+            random.choice(MODEL_ACTIVITY_MESSAGES),
+        )
     elapsed_text = (
         f"{elapsed:.1f}s"
         if state.get("phase") == "tool_result"
@@ -361,6 +383,7 @@ class _WaitHintLoop:
         self._tool_label = tool_label
         self._exec_summary = exec_summary
         self._task: asyncio.Task[None] | None = None
+        self._started_monotonic = 0.0
         self._stopped = asyncio.Event()
         self._disposed = False
         self._state: dict[str, Any] = {}
@@ -433,6 +456,7 @@ class _WaitHintLoop:
 
         if self._is_passive:
             return
+        self._started_monotonic = time.monotonic()
 
         if self._mode == "model":
             _active_stderr_wait_loops += 1
@@ -537,6 +561,7 @@ class _WaitHintLoop:
         self._task = asyncio.create_task(_run(), name="pks_wait_hints")
 
     async def stop(self) -> None:
+        global _last_model_wait_duration
         if self._disposed:
             return
         self._disposed = True
@@ -560,6 +585,10 @@ class _WaitHintLoop:
                     _active_loops.remove(self)
                 except ValueError:
                     pass
+        elif self._mode == "model" and self._started_monotonic:
+            duration = max(0.0, time.monotonic() - self._started_monotonic)
+            with _BODY_LOCK:
+                _last_model_wait_duration = duration
         self._release_primary()
 
     def force_pause(self) -> None:

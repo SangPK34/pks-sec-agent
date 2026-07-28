@@ -23,6 +23,8 @@ _PIPE_FRAMES = ("|", "/", "—", "\\")
 # Same frames as ``rich.status.Status(..., spinner="dots")`` (startup / license check).
 _BRAILLE_DOTS_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
 STARTUP_HINT_SPINNER_HZ = 8
+ACTIVITY_BG = "#392d63"
+ACTIVITY_FG = "#c5adff"
 
 
 def terminal_columns() -> int:
@@ -87,13 +89,13 @@ def build_compact_live_wait_hint_row(body: str, *, frame_tick: int) -> Text:
     """
     msg = _truncate_body(body, max(20, terminal_columns() - 12))
     line = Text()
-    line.append(braille_dots_frame(frame_tick), style="bold #9d7cff")
+    line.append(braille_dots_frame(frame_tick), style=f"bold {ACTIVITY_FG}")
     line.append(" ", style="")
     if "  Ctrl+C to interrupt  •  " in msg:
         action, suffix = msg.split("  Ctrl+C to interrupt  •  ", 1)
-        line.append(action, style="bold #9d7cff")
+        line.append(f" {action} ", style=f"bold {ACTIVITY_FG} on {ACTIVITY_BG}")
         line.append("  Ctrl+C to interrupt  •  ", style="dim")
-        line.append(suffix, style="dim")
+        line.append(f"{suffix} • ↓ 0", style="dim")
         return line
     line.append_text(_pks_brand_badge())
     line.append(" | ", style="dim")
@@ -107,11 +109,12 @@ def build_model_wait_hint_renderable(body: str) -> RenderableType:
     line = Text()
     if "  Ctrl+C to interrupt  •  " in msg:
         action, suffix = msg.split("  Ctrl+C to interrupt  •  ", 1)
-        line.append(action, style="bold #9d7cff")
+        line.append("✣ ", style=f"bold {ACTIVITY_FG}")
+        line.append(f" {action} ", style=f"bold {ACTIVITY_FG} on {ACTIVITY_BG}")
         line.append("  Ctrl+C to interrupt  •  ", style="dim")
-        line.append(suffix, style="dim")
+        line.append(f"{suffix} • ↓ 0", style="dim")
     else:
-        line.append(msg, style="bold #9d7cff")
+        line.append(msg, style=f"bold {ACTIVITY_FG}")
     return line
 
 

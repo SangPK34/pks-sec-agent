@@ -350,6 +350,9 @@ class CompactCLIHandler:
         self._live: Live | None = None
         self._paused = False
         self._owns_wait_hints = False
+        self._turn_started_monotonic = 0.0
+        self._thought_printed = False
+        self._worked_printed = False
         # task_id -> (from_agent, to_agent, expires_at)
         self._handoffs: dict[str, tuple[str, str, float]] = {}
 
@@ -375,6 +378,7 @@ class CompactCLIHandler:
 
     def flush(self) -> None:
         self._dismiss_live()
+        self._print_thought_note()
 
     def dismiss_for_final_output(self) -> None:
         """Clear the transient rows while keeping wait-hint ownership until flush."""
@@ -407,8 +411,17 @@ class CompactCLIHandler:
     # ---------------------------- Event handlers --------------------------
 
     def _on_turn_start(self, event: TurnStartEvent) -> None:
+        try:
+            from pks.util.wait_hints import consume_last_model_wait_duration
+
+            consume_last_model_wait_duration()
+        except Exception:
+            pass
         with self._lock:
             self._handoffs.clear()
+            self._turn_started_monotonic = time.monotonic()
+            self._thought_printed = False
+            self._worked_printed = False
         # Start Live now: ``model_wait_hints`` publishes its body before the
         # first ``TaskStartEvent``, and compact's exclusivity blocks the stderr
         # Status fallback — without an active Live the body has no renderer.
@@ -471,6 +484,47 @@ class CompactCLIHandler:
         # live block entirely so the only thing left in scrollback is the
         # model's markdown conclusion — task rows are ephemeral by design.
         self._dismiss_live()
+        self._print_worked_note()
+
+    def _print_thought_note(self) -> None:
+        if self._thought_printed:
+            return
+        try:
+            from pks.util.wait_hints import consume_last_model_wait_duration
+
+            duration = consume_last_model_wait_duration()
+        except Exception:
+            duration = 0.0
+        thinking_records = [
+            record
+            for record in (TASK_REGISTRY.for_turn() or [])
+            if record.tool_name == THINKING_TOOL_NAME
+            and record.status == "completed"
+        ]
+        if thinking_records:
+            duration += thinking_records[-1].duration_seconds
+        if duration <= 0.0:
+            return
+        seconds = max(1, round(duration))
+        unit = "second" if seconds == 1 else "seconds"
+        line = Text()
+        line.append("✻ ", style="bold #c5adff")
+        line.append(f"Thought for {seconds} {unit} ", style="bold #d7c4ff")
+        line.append("[Ctrl+O to expand]", style=GREY_HINT)
+        self._console.print(line)
+        self._thought_printed = True
+
+    def _print_worked_note(self) -> None:
+        if self._worked_printed or not self._turn_started_monotonic:
+            return
+        duration = max(0.0, time.monotonic() - self._turn_started_monotonic)
+        if duration < 1.0:
+            return
+        line = Text()
+        line.append("✻ ", style=GREY_HINT)
+        line.append(f"Worked for {format_secs(duration)}", style=GREY_HINT)
+        self._console.print(line)
+        self._worked_printed = True
 
     # ----------------------------- Live block -----------------------------
 

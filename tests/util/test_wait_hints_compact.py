@@ -10,6 +10,7 @@ import pks.util.streaming as streaming
 import pks.util.wait_hints as wait_hints
 from pks.output import TaskRecord
 from pks.repl.ui.compact_renderer import CompactCLIHandler, _row_for_record
+from pks.util.hint_renderables import build_model_wait_hint_renderable
 
 
 def test_compact_owner_suppresses_legacy_footer_refresh(monkeypatch):
@@ -174,7 +175,44 @@ def test_set_model_wait_retry_overlay_overrides_model_body():
         assert "Ctrl+C to interrupt" in body
     finally:
         wait_hints.set_model_wait_retry_overlay(None)
-    assert wait_hints._model_body(0.0, {}).startswith("Architecting…")
+    state = {}
+    first = wait_hints._model_body(0.0, state)
+    second = wait_hints._model_body(10.0, state)
+    assert first.split("  Ctrl+C", 1)[0] in wait_hints.MODEL_ACTIVITY_MESSAGES
+    assert first.split("  Ctrl+C", 1)[0] == second.split("  Ctrl+C", 1)[0]
+
+
+def test_model_wait_renderable_matches_command_code_chrome():
+    rendered = build_model_wait_hint_renderable(
+        "Architecting…  Ctrl+C to interrupt  •  1s"
+    )
+
+    assert "✣" in rendered.plain
+    assert "Architecting…" in rendered.plain
+    assert "Ctrl+C to interrupt" in rendered.plain
+    assert "↓ 0" in rendered.plain
+
+
+def test_compact_handler_prints_thought_and_worked_notes(monkeypatch):
+    output = StringIO()
+    handler = CompactCLIHandler(
+        Console(file=output, force_terminal=False, width=100)
+    )
+    monkeypatch.setattr(
+        wait_hints,
+        "consume_last_model_wait_duration",
+        lambda: 1.2,
+    )
+    monkeypatch.setattr("pks.repl.ui.compact_renderer.time.monotonic", lambda: 13.0)
+    monkeypatch.setattr("pks.repl.ui.compact_renderer.TASK_REGISTRY.for_turn", lambda: [])
+    handler._turn_started_monotonic = 10.0
+
+    handler._print_thought_note()
+    handler._print_worked_note()
+
+    text = output.getvalue()
+    assert "✻ Thought for 1 second [Ctrl+O to expand]" in text
+    assert "✻ Worked for 3.0s" in text
 
 
 def test_model_wait_body_after_tool_output_uses_tool_phase():
