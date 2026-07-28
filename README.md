@@ -74,17 +74,17 @@ Một số lệnh hữu ích: `/agent` (liệt kê/đổi agent), `/model`, `/ef
 
 ### Chạy nhiều mục tiêu cùng lúc
 
-Mặc định mọi process dùng chung workspace `~/.pks/workspace` và blackboard
-`~/.pks/blackboard.json`. Nếu mở nhiều tab, đặt workspace và blackboard riêng cho từng tab:
+Mỗi process PKS tự dùng một blackboard riêng trong `~/.pks/runtime`, nên findings của
+nhiều tab không đè lên nhau. Nếu muốn tách cả workspace của từng mục tiêu:
 
 ```bash
-PKS_WORKSPACE=target1 PKS_BB_FILE=~/.pks/bb_target1.json pks
-PKS_WORKSPACE=target2 PKS_BB_FILE=~/.pks/bb_target2.json pks
-PKS_WORKSPACE=chall1  PKS_BB_FILE=~/.pks/bb_chall1.json  pks
+PKS_WORKSPACE=target1 pks
+PKS_WORKSPACE=target2 pks
+PKS_WORKSPACE=chall1 pks
 ```
 
-Workspace tương ứng nằm tại `~/.pks/workspace/<PKS_WORKSPACE>`. Hai tab cố ý dùng chung
-hai biến trên sẽ phối hợp qua cùng file; dùng tên/file khác nhau để cách ly.
+Workspace tương ứng nằm tại `~/.pks/workspace/<PKS_WORKSPACE>`. Muốn nhiều process cố ý
+dùng chung findings thì đặt cùng một `PKS_BB_FILE` cho chúng.
 
 Khởi động lại `pks` tạo lịch sử hội thoại mới; chỉ `/resume` mới nạp lại message history.
 Blackboard được reset khi process mới khởi động; file trong workspace vẫn nằm trên đĩa
@@ -93,7 +93,7 @@ cho tới khi bạn tự dọn.
 Theo dõi tất cả từ một terminal khác:
 
 ```bash
-watch -n5 'grep -h FLAG ~/.pks/blackboard.json ~/.pks/bb_*.json 2>/dev/null || echo "no findings"'
+watch -n5 'grep -h FLAG ~/.pks/runtime/blackboard-*.json 2>/dev/null || echo "no findings"'
 ```
 
 ---

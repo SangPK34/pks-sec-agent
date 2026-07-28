@@ -158,13 +158,13 @@ def _session_banner_title_bar(console: Console, version: str, *, panel_outer_wid
     full = Text()
     full.append(" PKS ", style="bold #0d1117 on #58F9FF")
     full.append(" Cybersecurity AI ", style="bold white on #00363f")
-    full.append("v2.0.0.5", style=f"bold {_PKS_GREEN} on #00363f")
+    full.append(f"v{version}", style=f"bold {_PKS_GREEN} on #00363f")
     full.append(" ", style="on #00363f")
     if console.measure(full, options=opts).maximum <= title_slot:
         return full
     compact = Text()
     compact.append(" PKS ", style="bold #0d1117 on #58F9FF")
-    compact.append(" v2.0.0.5", style=f"bold {_PKS_GREEN} on #00363f")
+    compact.append(f" v{version}", style=f"bold {_PKS_GREEN} on #00363f")
     compact.append(" ", style="on #00363f")
     return compact
 

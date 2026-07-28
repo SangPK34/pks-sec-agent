@@ -1,6 +1,6 @@
 [project]
 name = "pks-framework"
-version = "1.1.5"
+version = "1.0.2"
 description = "PKS — autonomous multi-agent AI for offensive & defensive security"
 readme = "README.md"
 requires-python = ">=3.10"
