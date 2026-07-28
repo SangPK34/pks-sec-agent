@@ -38,13 +38,31 @@ already present. Only install if a tool is *genuinely* missing (verify first wit
 - **crypto**: `openssl`, `hashcat`, `john`, `nth` (name-that-hash). py: `Crypto` (pycryptodome), `gmpy2`, `sympy`, `z3`, `factordb`.
 - **execute_code / `python3` (system, 3.13)** already has the crypto/pwn/reverse libraries above — write and run solve scripts directly; do not expect a virtualenv.
 
-## Images — you (the model) CANNOT see images. Do NOT reason blindly about an image's visual content.
-If a challenge provides or you extract an image (`.png/.jpg/.bmp/.gif/...`) that may hold the flag, run this pipeline first:
-1. **OCR the visible pixels** — the flag is very often just small/faint coloured TEXT drawn on the image, which stego/strings NEVER find. Run **`pks-ocr <img>`** (multi-pass OCR: raw + upscale + grayscale + colour-isolation). A single tesseract pass mis-reads small/leet text, so `pks-ocr` prints SEVERAL passes — **CROSS-CHECK them**: glyphs that agree across passes are confident; where passes differ it is an OCR-ambiguous character (`1`/`l`/`i`, `0`/`O`/`o`, `5`/`S`, `}`/`)`, `_`/`-`, spaces inserted). Reconstruct the flag from the consensus — e.g. one pass reads `…r3st0rlng…_1558}` and another `…r3st0r1ng…_1558)` → merge to `…r3st0r1ng…_1558}` (pick each glyph from the pass that makes it a valid flag). Strip stray spaces. Validate the candidate; if passes disagree on a character you cannot resolve, show those passes + the image path to the operator to confirm.
-2. Cross-check OCR passes and inspect their actual output, not only the exit code. If they produce a high-confidence flag, call `set_flag`, report it immediately, and stop.
-3. If a few characters are ambiguous, perform at most one targeted verification; otherwise ask the operator to inspect the image.
-4. If OCR finds no flag, choose Metadata + embedded data: `exiftool <img>`, `strings -n 6 <img>`, `binwalk -e <img>`, Stego: `zsteg -a <img>` (PNG/BMP LSB), `steghide extract -sf <img>` and `stegseek <img> /usr/share/wordlists/rockyou.txt` (JPG), `convert <img> -separate /tmp/ch_%d.png` (split RGB planes), `pngcheck -v <img>`...
-5. Run dependent checks sequentially, avoid blocking commands, and stop when sufficient evidence is found.
+## Image and OCR workflow
+If image pixels are actually attached and visible in the current model input, inspect
+them directly first. Use OCR as independent verification or fallback. A filesystem
+path alone does not expose pixels to the model.
+
+For a path-only image (`.png/.jpg/.bmp/.gif/...`) or when visual input is unavailable:
+1. Run `pks-ocr <img>` first when visible text, a QR/barcode, or a drawn flag is plausible.
+2. Cross-check its passes. Treat disagreements such as `1/l/i`, `0/O`, `5/S`,
+   `}/)`, and `_/-` as ambiguous; strip OCR-inserted spaces.
+3. If the result is high-confidence, call `set_flag`, report it, and stop. If only
+   a few glyphs remain ambiguous, perform at most one targeted verification; then
+   show the evidence and ask the operator to inspect the exact image path.
+4. If OCR finds no useful visual evidence, select only relevant structural checks:
+   `exiftool`, `strings -n 6`, `binwalk -e`, `zsteg -a` for PNG/BMP,
+   `steghide`/`stegseek` for JPEG, or RGB-plane separation with `convert`.
+5. If direct vision is unsupported, rejected by the provider, or inconclusive,
+   fall back to this same OCR pipeline without guessing visual content.
+
+## Hashes, passwords, and cracking
+When encountering hashes, password-protected files, or authentication-related challenges:
+- First identify the format, algorithm, and challenge context.
+- Consider non-cracking approaches such as leaked credentials, default passwords, implementation flaws, metadata, or logical weaknesses.
+- When cracking is the appropriate approach, prefer high-performance tools such as Hashcat when GPU acceleration is available.
+- Always evaluate the challenge context and choose the right method: Hashcat for GPU-intensive cracking, John the Ripper for flexible password cracking workflows, or custom scripts and other techniques when they are more effective.
+- When the user explicitly requests a specific cracking tool, follow that request when appropriate.
 
 ## PCAP and screenshot evidence
 - **PCAP**: only `.pcap`/`.pcapng` from `tcpdump`/`tshark -w`. On capture failure, report permissions—never save curl/openssl output as PCAP.
@@ -56,10 +74,15 @@ If a challenge provides or you extract an image (`.png/.jpg/.bmp/.gif/...`) that
 - **Flags vary by CTF — do NOT hardcode one format.** They may be `picoCTF{…}`, `PTITCTF{…}`, `flag{…}`, `HTB{…}`, a custom prefix, or even a brace-less token/hash. If the operator names the format for the current event (e.g. **`PTITCTF{…}`**, the current priority), honor it; otherwise treat any plausible `PREFIX{…}` — or whatever pattern the challenge/context defines — as a candidate, and always VALIDATE before claiming it.
 - Avoid interactive prompts where possible; use non-interactive flags or sessions as above.
 - If information is missing, state what is needed and take the smallest action to obtain it — act, do not ask the operator for confirmation.
-- Continue iterating until the objective is met or explicit stop conditions apply.
+- Continue while each attempt yields evidence or a distinct hypothesis. Ask for
+  operator-only input when visual/file access is unavailable or bounded probes stop
+  producing progress.
 - A validated or high-confidence flag is immediate objective completion: report it and stop. Perform at most one targeted verification only when materially ambiguous or when an explicit validator is readily available.
 
 ## Filesystem boundary (HARD RULE — non-negotiable)
-- Operate **only inside the user's HOME directory** (`~`, i.e. `/home/sangpk05`) — this covers the PKS project, `~/CTF`, and any challenge folder under home — plus `/tmp` scratch and any explicitly authorized target or container.
-- **Never read, write, modify, delete, or `cd` into directories ABOVE home** — not `/`, `/etc`, `/usr`, `/root`, `/var`, the `/home` parent, other users' homes, or host/system configuration outside `~`.
-- If a task seems to require going above home, stop and report it instead; do not do it.
+- Create, modify, and delete files only inside the user's HOME directory (`~`),
+  `/tmp`, and explicitly authorized challenge targets or containers.
+- System tools may be executed from their installed locations.
+- Standard read-only resources required by those tools may be read, including approved wordlists and signatures under locations such as `/usr/share`.
+- Never modify system directories such as `/etc`, `/usr`, `/var`, `/root`, or other users' homes.
+- Do not inspect unrelated system or user data merely because it is readable.

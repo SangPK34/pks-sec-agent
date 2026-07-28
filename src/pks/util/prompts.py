@@ -79,6 +79,7 @@ _MICRO_PROFILE_PATHS: dict[str, str] = {
     "thought_router": "prompts/micro/thought_router.md",
     "root": "prompts/micro/root.md",
     "selection": "prompts/micro/root.md",
+    "orchestration": "prompts/micro/orchestration.md",
     "continuous_ops": "prompts/micro/continuous_ops.md",
     "mail": "prompts/micro/mail.md",
     "compliance": "prompts/micro/compliance.md",
@@ -151,6 +152,9 @@ def _resolve_agent_profile_key(agent, base_instructions: str) -> str:
 
     if "root agent" in signal or "selection agent" in signal:
         return "root"
+
+    if "orchestration agent" in signal:
+        return "orchestration"
 
     if "dns_smtp" in name or ("email configuration security" in base and "dmarc" in base):
         return "mail"
@@ -419,12 +423,19 @@ Continue from where the previous conversation left off, using the memory above a
 
 def apply_compacted_memory_to_agent(agent):
     """
-    Apply compacted memory summaries to an agent if available.
+    Apply compacted memory to legacy/custom instruction providers.
 
     Args:
         agent: The agent to apply memory to
     """
     if not compacted_memory_env_enabled():
+        return
+
+    # Standard PKS renderers read the latest compacted summary dynamically in
+    # system_master_template.md. Appending another block here duplicates memory.
+    if callable(agent.instructions) and hasattr(
+        agent.instructions, "_is_system_prompt_renderer"
+    ):
         return
 
     try:
@@ -441,21 +452,13 @@ def apply_compacted_memory_to_agent(agent):
             # Combine all summaries for this agent
             all_summaries = "\n\n---\n\n".join(COMPACTED_SUMMARIES[agent_name])
             if callable(agent.instructions):
-                if hasattr(agent.instructions, "_is_system_prompt_renderer"):
-                    original_base = agent.instructions._base_instructions
-                    prev_key = getattr(agent.instructions, "_cyber_micro_profile_key", None)
-                    agent.instructions = create_system_prompt_renderer(
-                        _upsert_compacted_memory_block(original_base, all_summaries),
-                        cyber_micro_profile_key=prev_key,
-                    )
-                else:
-                    original_func = agent.instructions
+                original_func = agent.instructions
 
-                    def wrapped_instructions(*args, **kwargs):
-                        result = original_func(*args, **kwargs)
-                        return _upsert_compacted_memory_block(result, all_summaries)
+                def wrapped_instructions(*args, **kwargs):
+                    result = original_func(*args, **kwargs)
+                    return _upsert_compacted_memory_block(result, all_summaries)
 
-                    agent.instructions = wrapped_instructions
+                agent.instructions = wrapped_instructions
             else:
                 agent.instructions = _upsert_compacted_memory_block(
                     str(agent.instructions), all_summaries

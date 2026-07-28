@@ -2,29 +2,17 @@
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import pytest
 
 from pks.util import load_prompt_template
 from pks.util.prompts import _MICRO_PROFILE_PATHS
 
-# Primary agent system templates (short list for CI time).
-_SYSTEM_PROMPT_RELPATHS = (
-    "prompts/system_orchestration_agent.md",
-    "prompts/system_root_agent.md",
-    "prompts/system_red_team_agent.md",
-    "prompts/system_blue_team_agent.md",
-    "prompts/system_bug_bounter.md",
-    "prompts/system_web_pentester.md",
-    "prompts/system_ctf_agent.md",
-    "prompts/system_compliance_agent.md",
-    "prompts/system_use_cases.md",
-    "prompts/memory_analysis_agent.md",
-    "prompts/reverse_engineering_agent.md",
-    "prompts/subghz_agent.md",
-    "prompts/wifi_security_agent.md",
-    "prompts/system_dfir_agent.md",
-    "prompts/system_network_analyzer.md",
-    "prompts/system_replay_attack_agent.md",
+_PROMPT_DIR = Path(__file__).resolve().parents[2] / "src" / "pks" / "prompts"
+_SYSTEM_PROMPT_RELPATHS = tuple(
+    f"prompts/{path.name}" for path in sorted(_PROMPT_DIR.glob("*.md"))
 )
 
 
@@ -43,3 +31,33 @@ def test_micro_profile_templates_load(monkeypatch: pytest.MonkeyPatch) -> None:
         assert isinstance(text, str)
         assert len(text) > 40, f"micro prompt unexpectedly short: {rel}"
         assert "MICRO-PROFILE" in text.upper(), rel
+
+
+def test_prompt_examples_match_current_tool_contract() -> None:
+    stale_two_positional_args = re.compile(
+        r'generic_linux_command\("[^"]+",\s*"'
+    )
+    violations: list[str] = []
+    for path in sorted(_PROMPT_DIR.rglob("*.md")):
+        text = path.read_text(encoding="utf-8")
+        if stale_two_positional_args.search(text):
+            violations.append(str(path.relative_to(_PROMPT_DIR)))
+
+    assert violations == []
+
+
+def test_prompt_contracts_have_no_stale_machine_or_rule_references() -> None:
+    forbidden = (
+        "Override Rule ",
+        "/home/sangpk05",
+        "CANNOT see images",
+        "authoritative for this turn",
+    )
+    violations: list[str] = []
+    for path in sorted(_PROMPT_DIR.rglob("*.md")):
+        text = path.read_text(encoding="utf-8")
+        for phrase in forbidden:
+            if phrase in text:
+                violations.append(f"{path.relative_to(_PROMPT_DIR)}: {phrase}")
+
+    assert violations == []

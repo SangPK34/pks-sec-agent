@@ -48,22 +48,22 @@ For each agent, create a specialized prompt that:
 ## Available Agents (use with /agent or /parallel add):
 Based on the actual agents in the system:
 1. blueteam_agent - Defensive security analysis
-2. bug_bounty_agent - Bug bounty hunting 
-3. cybersecurity-engineer - Cybersecurity engineering and architecture
-4. dfir_agent - Digital forensics and incident response
-5. flag_discriminator - Flag discrimination
-6. ctf_agent - Basic agent with single tool execution (DEFAULT)
-7. dns_smtp_agent - DNS and SMTP analysis
-8. memory_analysis_agent - Memory analysis
-9. network_security_analyzer_agent - Network security analysis
-10. redteam_agent - Offensive security testing (RECOMMENDED DEFAULT)
-11. replay_attack_agent - Replay attack analysis
-12. reporting_agent - Report generation
-13. retesting_agent - Retesting vulnerabilities
-14. reverse_engineering_agent - Reverse engineering
-15. subghz_sdr_agent - SubGHz and SDR analysis
-16. thought_agent - Reasoning and analysis
-17. use_case_agent - Use case analysis
+2. bug_bounter_agent - Bug bounty hunting
+3. dfir_agent - Digital forensics and incident response
+4. flag_discriminator - Flag discrimination
+5. ctf_agent - CTF challenge execution
+6. dns_smtp_agent - DNS and SMTP analysis
+7. memory_analysis_agent - Memory analysis
+8. network_security_analyzer_agent - Network security analysis
+9. redteam_agent - Offensive security testing (RECOMMENDED DEFAULT)
+10. replay_attack_agent - Replay attack analysis
+11. reporting_agent - Report generation
+12. retester_agent - Retesting vulnerabilities
+13. reverse_engineering_agent - Reverse engineering
+14. subghz_sdr_agent - SubGHz and SDR analysis
+15. thought_agent - Reasoning and analysis
+16. use_case_agent - Use case analysis
+17. web_pentester_agent - Focused web application testing
 18. wifi_security_agent - WiFi security
 19. bb_triage_swarm_pattern - Bug bounty triage swarm
 20. redteam_swarm_pattern - Red team swarm
@@ -81,7 +81,7 @@ Reformulated prompts for different agents:
 - redteam_agent: "Perform comprehensive penetration testing on 192.168.1.1. Focus on identifying vulnerabilities, misconfigurations, and potential attack vectors. Use aggressive scanning techniques."
 - blueteam_agent: "Analyze defensive measures and security posture of 192.168.1.1. Identify security controls, monitoring capabilities, and recommend hardening strategies."
 - network_security_analyzer_agent: "Conduct deep network analysis of 192.168.1.1. Map open ports, services, protocols, and network topology. Identify network-level vulnerabilities."
-- bug_bounty_agent: "Hunt for high-value vulnerabilities on 192.168.1.1 following bug bounty methodology. Focus on OWASP Top 10, authentication bypasses, and critical findings."
+- bug_bounter_agent: "Hunt for high-value vulnerabilities on 192.168.1.1 following bug bounty methodology. Focus on OWASP Top 10, authentication bypasses, and critical findings."
 
 User: "analyze this application"
 
@@ -212,7 +212,7 @@ User: "comprehensive security test with network, app and infra"
             "prompt": "Focus on application-layer attacks. Test for injection vulnerabilities, authentication bypasses, session management flaws, and business logic issues."
         },
         {
-            "name": "bug_bounty_agent",
+            "name": "bug_bounter_agent",
             "prompt": "Hunt for infrastructure vulnerabilities. Check for misconfigurations, outdated services, weak credentials, and privilege escalation paths."
         }
     ],

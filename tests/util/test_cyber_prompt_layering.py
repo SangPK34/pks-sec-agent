@@ -15,6 +15,7 @@ from pks.util.prompts import (
     _compose_cyber_layered_prompt,
     _load_micro_profile_text,
     _upsert_compacted_memory_block,
+    apply_compacted_memory_to_agent,
     create_system_prompt_renderer,
     load_prompt_template,
 )
@@ -227,3 +228,35 @@ def test_compacted_memory_migrates_legacy_marker() -> None:
     assert rendered.count("<pks_compacted_memory>") == 1
     assert "OLD SUMMARY" not in rendered
     assert "NEW SUMMARY" in rendered
+
+
+def test_standard_renderer_injects_compacted_memory_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pks.repl.commands.memory import COMPACTED_SUMMARIES
+
+    marker = "UNIQUE_COMPACTED_MEMORY_MARKER"
+    agent_name = "Memory regression agent"
+    previous = COMPACTED_SUMMARIES.get(agent_name)
+    monkeypatch.setenv("PKS_COMPACTED_MEMORY", "true")
+    monkeypatch.setenv("PKS_ENV_CONTEXT", "false")
+    monkeypatch.setenv("PKS_BLACKBOARD", "false")
+    COMPACTED_SUMMARIES[agent_name] = [marker]
+    try:
+        agent = SimpleNamespace(
+            name=agent_name,
+            model=SimpleNamespace(_current_plan=None),
+        )
+        agent.instructions = create_system_prompt_renderer("BASE", "ctf")
+
+        apply_compacted_memory_to_agent(agent)
+        rendered = agent.instructions(SimpleNamespace(context_variables={}), agent)
+
+        assert rendered.count(marker) == 1
+        assert rendered.count("<compacted_context>") == 1
+        assert "<pks_compacted_memory>" not in rendered
+    finally:
+        if previous is None:
+            COMPACTED_SUMMARIES.pop(agent_name, None)
+        else:
+            COMPACTED_SUMMARIES[agent_name] = previous

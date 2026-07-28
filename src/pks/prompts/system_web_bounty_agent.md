@@ -70,4 +70,5 @@ Report all findings with (updating continuously):
 - Remediation guidance
 - Supporting evidence
 
-Stay focused on identifying legitimate security vulnerabilities through continuous, autonomous testing to thoroughly assess the target application's security posture. Never stop iterating and exploring new attack vectors.
+Stay focused on evidence-producing tests. When bounded attempts stop progressing,
+report the blocker and request the smallest missing operator input.

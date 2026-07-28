@@ -23,9 +23,10 @@ class _HandoffTask(BaseModel):
     task: str = Field(
         ...,
         description=(
-            "One or two concise technical ENGLISH sentences for the destination agent. "
-            "Preserve exact paths, commands, artifacts, constraints, and the user's intent. "
-            "Do NOT add scope, drop requirements, or invent targets."
+            "One or two concise technical ENGLISH routing sentences for the destination "
+            "agent. Preserve exact paths, commands, artifacts, constraints, and the user's "
+            "intent. The original operator request remains canonical. Do NOT add scope, "
+            "drop requirements, or invent targets."
         ),
     )
 
@@ -49,8 +50,11 @@ def handoff_task_filter(data: HandoffInputData) -> HandoffInputData:
 
     task_block = (
         "<agent_handoff_task>\n"
-        "Internal delegation brief (authoritative for this turn):\n"
+        "Internal delegation brief (routing summary; the original operator request "
+        "remains canonical):\n"
         f"{task}\n"
+        "If this brief conflicts with the original operator request, follow the original "
+        "request.\n"
         "</agent_handoff_task>"
     )
     if isinstance(filtered.input_history, str):
