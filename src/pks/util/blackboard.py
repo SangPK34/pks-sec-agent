@@ -20,6 +20,7 @@ Disable with ``PKS_BLACKBOARD=false``. Stored as a small JSON file under ``~/.pk
 
 from __future__ import annotations
 
+import atexit
 import json
 import os
 import pathlib
@@ -27,6 +28,8 @@ import threading
 import time
 
 _LOCK = threading.RLock()
+_RUNTIME_PATH: pathlib.Path | None = None
+_RUNTIME_PID: int | None = None
 
 
 def _enabled() -> bool:
@@ -49,8 +52,7 @@ def _cmd_cap() -> int:
 
 
 def _bb_path() -> pathlib.Path:
-    # PKS_BB_FILE lets each concurrent PKS instance use its OWN blackboard file so
-    # parallel solves of different challenges never cross-contaminate or reset each other.
+    # An explicit path remains available for callers that intentionally manage their own board.
     override = (os.getenv("PKS_BB_FILE") or "").strip()
     if override:
         p = pathlib.Path(os.path.expanduser(override))
@@ -59,12 +61,33 @@ def _bb_path() -> pathlib.Path:
         except Exception:
             pass
         return p
+
+    # Agents within one PKS process share a board. Separate PKS processes (terminal tabs)
+    # must not share one, otherwise a new process can reset another process's findings.
+    global _RUNTIME_PATH, _RUNTIME_PID
+    pid = os.getpid()
+    if _RUNTIME_PATH is not None and _RUNTIME_PID == pid:
+        return _RUNTIME_PATH
+
     base = pathlib.Path(os.path.expanduser("~")) / ".pks"
     try:
+        base = base / "runtime"
         base.mkdir(parents=True, exist_ok=True)
     except Exception:
         base = pathlib.Path("/tmp")
-    return base / "blackboard.json"
+    _RUNTIME_PID = pid
+    _RUNTIME_PATH = base / f"blackboard-{pid}.json"
+    return _RUNTIME_PATH
+
+
+def _cleanup_runtime_file() -> None:
+    """Remove only the current process's automatically allocated board."""
+    if _RUNTIME_PATH is None or _RUNTIME_PID != os.getpid():
+        return
+    try:
+        _RUNTIME_PATH.unlink(missing_ok=True)
+    except Exception:
+        pass
 
 
 def _blank() -> dict:
@@ -195,3 +218,6 @@ def render_block(max_findings: int = 40, max_commands: int = 40) -> str:
                 + (f" -> {e['head']}" if e.get("head") else "") for e in shown]
 
     return "\n".join(out)
+
+
+atexit.register(_cleanup_runtime_file)
