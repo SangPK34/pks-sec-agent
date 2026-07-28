@@ -210,6 +210,44 @@ def test_get_token_info_includes_agent_metadata() -> None:
     assert token_info["terminal_number"] == 9
 
 
+def test_multimodal_input_is_remembered_in_chat_completions_schema() -> None:
+    from unittest.mock import MagicMock
+
+    dummy_client = MagicMock()
+    dummy_client.base_url = "http://fake"
+    model = OpenAIChatCompletionsModel(
+        model=pks_model,
+        openai_client=dummy_client,  # type: ignore[arg-type]
+        agent_name="vision-history-test",
+    )
+    raw_input = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "read this"},
+                {
+                    "type": "input_image",
+                    "image_url": "data:image/png;base64,AAAA",
+                    "detail": "auto",
+                },
+            ],
+        }
+    ]
+    converted = model._converter.items_to_messages(raw_input, model_instance=model)
+
+    model._remember_user_input(raw_input, converted)
+
+    content = model.message_history[-1]["content"]
+    assert content[0] == {"type": "text", "text": "read this"}
+    assert content[1] == {
+        "type": "image_url",
+        "image_url": {
+            "url": "data:image/png;base64,AAAA",
+            "detail": "auto",
+        },
+    }
+
+
 @pytest.mark.asyncio
 async def test_fetch_response_non_stream(monkeypatch) -> None:
     """

@@ -20,6 +20,44 @@ from typing import Any, List, Dict, Tuple
 _session_recorder = None
 
 
+def _sanitize_messages_for_log(messages):
+    """Copy messages while omitting inline image bytes from persistent logs."""
+    if not isinstance(messages, list):
+        return messages
+    sanitized = []
+    for message in messages:
+        if not isinstance(message, dict):
+            sanitized.append(message)
+            continue
+        message_copy = message.copy()
+        content = message_copy.get("content")
+        if isinstance(content, list):
+            clean_content = []
+            for part in content:
+                if not isinstance(part, dict):
+                    clean_content.append(part)
+                    continue
+                image_url = part.get("image_url")
+                url = image_url.get("url") if isinstance(image_url, dict) else image_url
+                if part.get("type") in {"image_url", "input_image"} and isinstance(
+                    url, str
+                ) and url.startswith("data:image/"):
+                    text_type = (
+                        "input_text" if part.get("type") == "input_image" else "text"
+                    )
+                    clean_content.append(
+                        {
+                            "type": text_type,
+                            "text": "[PKS inline image omitted from session log]",
+                        }
+                    )
+                else:
+                    clean_content.append(part)
+            message_copy["content"] = clean_content
+        sanitized.append(message_copy)
+    return sanitized
+
+
 def _format_log_message(message, args) -> str:
     """Format a log message in the same printf-style way as :mod:`logging`.
 
@@ -142,7 +180,7 @@ class DataRecorder:  # pylint: disable=too-few-public-methods
         """
         request_data = {
             "model": create_params["model"],
-            "messages": create_params["messages"],
+            "messages": _sanitize_messages_for_log(create_params["messages"]),
             "stream": create_params["stream"],
         }
         if "tools" in create_params:

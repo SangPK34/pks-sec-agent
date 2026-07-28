@@ -14,7 +14,7 @@
 - **30+ agent chuyên biệt** phủ toàn bộ phổ — tấn công (pentest, bug bounty, red team, web, recon, reverse) và phòng thủ (blue team, DFIR, điều tra memory/network, purple team, reporting, compliance) — Có agent giải CTF (pwn · reverse · web · forensic · crypto) với đầy đủ toolbox nằm sẵn trong "playbook".
 - **Bộ nhớ chung (blackboard)** — phát hiện được ghi bằng `note_finding` sẽ vào ngữ cảnh chung, giúp các agent hiểu việc nhau đã làm kể cả sau khi chuyển agent, bị ngắt, hay nén ngữ cảnh.
 - **Tự động** — không hỏi xác nhận giữa chừng; cứ chạy tới khi xong hoặc bạn dừng.
-- **Đọc được chữ trong ảnh** — `pks-ocr` OCR đa lượt + đối chiếu chéo để moi flag/bằng chứng từ ảnh chụp ngay cả khi model không có "mắt".
+- **Soi ảnh native + fallback OCR** — ảnh local được gửi thẳng cho model vision; nếu model/gateway không hỗ trợ thì PKS tự chuyển sang `pks-ocr`.
 - **Gọn & nhanh** — terminal chỉ render bản xem trước ngắn; LLM nhận output riêng với giới hạn lớn hơn, cắt thông minh khi thật sự quá dài và tự nhận diện cửa sổ ngữ cảnh theo model.
 - **Chạy nhiều mục tiêu cùng lúc** — mỗi mục tiêu/challenge một instance riêng, không đụng nhau.
 
@@ -107,6 +107,7 @@ watch -n5 'grep -h FLAG ~/.pks/runtime/blackboard-*.json 2>/dev/null || echo "no
 | `PKS_MODEL` | tên model endpoint của bạn phục vụ **(bắt buộc)** |
 | `PKS_STREAM=true` | stream phản hồi của model thời gian thực|
 | `PKS_TUI=false` | dùng REPL compact (Nhẹ hơn TUI) |
+| `PKS_VISION=auto` | gửi ảnh local cho model vision, tự fallback sang `pks-ocr` |
 | `PKS_TELEMETRY=false` | tắt telemetry |
 | `PKS_COMPACT_REPL=0` | `0` hiện output tool inline; `1` gom thành pill |
 | `PKS_CYBER_PROFILE_MODE` | cỡ baseline cyber: `lite` \| `full` \| `off` |

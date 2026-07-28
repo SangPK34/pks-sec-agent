@@ -748,6 +748,48 @@ class OpenAIChatCompletionsModel(Model):
             if PARALLEL_ISOLATION.is_parallel_mode() and self.agent_id:
                 PARALLEL_ISOLATION.update_isolated_history(self.agent_id, msg)
 
+    @staticmethod
+    def _user_content_for_log(content: Any) -> str:
+        """Log multimodal turns without copying base64 image payloads."""
+        if isinstance(content, str):
+            return content
+        if not isinstance(content, list):
+            return str(content)
+        chunks: list[str] = []
+        image_count = 0
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") in {"text", "input_text"}:
+                chunks.append(str(part.get("text", "")))
+            elif part.get("type") in {"image_url", "input_image"}:
+                image_count += 1
+        if image_count:
+            chunks.append(f"[{image_count} local image(s) attached]")
+        return "\n".join(chunk for chunk in chunks if chunk)
+
+    def _remember_user_input(
+        self,
+        input: str | list[TResponseInputItem],
+        converted_input_messages: list[dict],
+    ) -> None:
+        """Persist user input in Chat Completions schema, including images."""
+        if isinstance(input, str):
+            self.add_to_message_history({"role": "user", "content": input})
+            self.logger.log_user_message(input)
+            return
+        for message in converted_input_messages:
+            if not isinstance(message, dict) or message.get("role") != "user":
+                continue
+            user_message = {
+                "role": "user",
+                "content": message.get("content", ""),
+            }
+            self.add_to_message_history(user_message)
+            self.logger.log_user_message(
+                self._user_content_for_log(user_message["content"])
+            )
+
     def set_agent_name(self, name: str) -> None:
         """Set the agent name for CLI display purposes."""
         self.agent_name = name
@@ -822,15 +864,7 @@ class OpenAIChatCompletionsModel(Model):
             # Add user messages to message_history.
             # add_to_message_history() has built-in dedup (same role+content),
             # so repeated calls with the same message within a Runner loop are safe.
-            if isinstance(input, str):
-                self.add_to_message_history({"role": "user", "content": input})
-                self.logger.log_user_message(input)
-            elif isinstance(input, list):
-                for item in input:
-                    if isinstance(item, dict) and item.get("role") == "user":
-                        self.add_to_message_history(
-                            {"role": "user", "content": item.get("content", "")}
-                        )
+            self._remember_user_input(input, new_messages)
 
             # IMPORTANT: Ensure the message list has valid tool call/result pairs
             # This needs to happen before the API call AND before applying cache_control
@@ -1642,20 +1676,7 @@ class OpenAIChatCompletionsModel(Model):
                 #         }
                 #         self.add_to_message_history(sys_msg)
 
-                if isinstance(input, str):
-                    user_msg = {"role": "user", "content": input}
-                    self.add_to_message_history(user_msg)
-                    # Log the user message
-                    self.logger.log_user_message(input)
-                elif isinstance(input, list):
-                    for item in input:
-                        if isinstance(item, dict):
-                            if item.get("role") == "user":
-                                user_msg = {"role": "user", "content": item.get("content", "")}
-                                self.add_to_message_history(user_msg)
-                                # Log the user message
-                                if item.get("content"):
-                                    self.logger.log_user_message(item.get("content"))
+                self._remember_user_input(input, new_messages)
 
                 # IMPORTANT: Ensure the message list has valid tool call/result pairs
                 # This needs to happen before the API call AND before applying cache_control

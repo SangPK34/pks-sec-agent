@@ -27,6 +27,13 @@ from pks.tui.core.terminal_console import get_terminal_console, set_terminal_out
 from pks.tui.core.terminal_tracking import set_current_terminal_id, clear_current_terminal_id
 from pks.tui.core.execution_context import set_terminal_id_context, reset_terminal_id_context
 from pks.tui.core.environment_overrides import async_environment_override
+from pks.util.vision import (
+    compact_vision_history,
+    input_has_images,
+    is_vision_rejection,
+    prepare_vision_input,
+    remove_pending_vision_history,
+)
 
 try:
     from pks.repl.commands.compact import TUI_COMPACTION_MONITOR
@@ -348,7 +355,10 @@ class TerminalRunner:
                     self.display_context.interaction_counter += 1
 
                 # New user turn only — history is merged inside get_response.
-                turn_input: Union[str, List[Dict[str, Any]]] = user_input
+                prepared_vision = prepare_vision_input(user_input)
+                turn_input: Union[str, List[Dict[str, Any]]] = (
+                    prepared_vision.model_input
+                )
 
                 # For parallel execution, we need to await the result directly
                 # This allows the session manager to properly wait for all agents
@@ -362,7 +372,31 @@ class TerminalRunner:
                 
                 # Create new task
                 self.current_task = asyncio.create_task(self._run_agent_async(turn_input))
-                await self.current_task
+                result = None
+                try:
+                    try:
+                        result = await self.current_task
+                    except Exception as exc:
+                        if not prepared_vision.has_images or not is_vision_rejection(exc):
+                            raise
+                        remove_pending_vision_history(self.agent, prepared_vision)
+                        if os.getenv('PKS_BROADCAST_MODE') != 'true':
+                            self.terminal.write(
+                                "[dim]Model hiện tại không nhận ảnh; PKS đang fallback sang OCR…[/dim]"
+                            )
+                        fallback_input = await asyncio.to_thread(
+                            prepared_vision.ocr_fallback_input
+                        )
+                        self.current_task = asyncio.create_task(
+                            self._run_agent_async(fallback_input)
+                        )
+                        result = await self.current_task
+                finally:
+                    if prepared_vision.has_images:
+                        compact_vision_history(self.agent, prepared_vision)
+                        last_agent = getattr(result, "last_agent", None)
+                        if last_agent is not None and last_agent is not self.agent:
+                            compact_vision_history(last_agent, prepared_vision)
         except asyncio.CancelledError:
             # This is expected when cancelling - just log it
             self.logger.info(f"Command execution cancelled in terminal {self.config.terminal_number}")
@@ -396,7 +430,7 @@ class TerminalRunner:
 
     async def _run_agent_async(
         self, turn_input: Union[str, List[Dict[str, Any]]]
-    ) -> None:
+    ) -> Any:
         """
         Run agent asynchronously without blocking UI
         """
@@ -504,6 +538,7 @@ class TerminalRunner:
                                 max_messages=1,
                                 token_info=token_info,
                             )
+                    return result
 
                 except asyncio.CancelledError:
                     # Silently handle cancellation
@@ -594,6 +629,8 @@ class TerminalRunner:
                             self.terminal.write(f"[red]{error_msg}[/red]")
                         self._report_error_to_info_bar(str(e))
                 except Exception as e:
+                    if input_has_images(turn_input) and is_vision_rejection(e):
+                        raise
                     # Check if this is the coroutine reuse error
                     if "cannot reuse already awaited coroutine" in str(e):
                         # This error should be silently ignored
@@ -684,11 +721,16 @@ class TerminalRunner:
                 # Create a simple result object with the content
                 # Don't set final_output to avoid duplicate display
                 class StreamResult:
-                    def __init__(self, content, usage=None):
+                    def __init__(self, content, usage=None, last_agent=None):
                         self.final_output = content
                         self.usage = usage
+                        self.last_agent = last_agent
 
-                return StreamResult(content_buffer, final_usage)
+                return StreamResult(
+                    content_buffer,
+                    final_usage,
+                    getattr(result, "last_agent", None),
+                )
             else:
                 # Non-streaming execution
                 return await Runner.run(self.agent, turn_input)
