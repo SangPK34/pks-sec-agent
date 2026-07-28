@@ -26,6 +26,7 @@ INPUT_PURPLE_BG = "#332653"
 INPUT_PURPLE_FG = "#ffffff"
 INPUT_BORDER = "#3f4652"
 INPUT_MUTED = "#778195"
+COMPLETION_MENU_ROWS = 8
 
 _REPL_STDIN_EXHAUSTED_PENDING = False
 
@@ -134,6 +135,13 @@ def _wrapped_input_rows(text: str, terminal_width: int) -> int:
     return max(1, rows)
 
 
+def _completion_menu_rows(session: PromptSession) -> int:
+    state = session.default_buffer.complete_state
+    if state is None:
+        return 0
+    return min(COMPLETION_MENU_ROWS, len(state.completions))
+
+
 def _install_prompt_layout(session: PromptSession, toolbar_func) -> None:
     """Keep the input footer next to the buffer and pin system status at the bottom."""
     from prompt_toolkit.filters import is_done, renderer_height_is_known
@@ -150,6 +158,7 @@ def _install_prompt_layout(session: PromptSession, toolbar_func) -> None:
             session.default_buffer.text,
             terminal.columns,
         )
+        rows += _completion_menu_rows(session)
         return Dimension.exact(min(rows, max(3, terminal.lines - 8)))
 
     input_window.height = _input_height

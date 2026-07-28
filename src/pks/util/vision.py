@@ -31,6 +31,12 @@ _PATH_PATTERN = re.compile(
     )""",
     re.IGNORECASE | re.VERBOSE,
 )
+_TOOL_IMAGE_PATTERN = re.compile(
+    r"(?mi)^\s*(?:\|\s*)?(?P<path>[^:\r\n]+?):\s+"
+    r"(?:JPEG|PNG|GIF|WEBP|TIFF|BMP)\s+image data\b"
+)
+
+
 def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
     try:
         value = int((os.getenv(name) or str(default)).strip())
@@ -44,7 +50,10 @@ def _vision_enabled() -> bool:
     return value not in {"0", "false", "off", "no", "disabled"}
 
 
-def _normalize_user_path(raw: str) -> Path:
+def _normalize_user_path(
+    raw: str,
+    base_dirs: Iterable[str | os.PathLike[str]] = (),
+) -> Path:
     value = raw.strip().strip("()[]{}<>,;")
     if value.lower().startswith(("http://", "https://", "data:")):
         raise ValueError("remote URLs are not local image paths")
@@ -60,7 +69,19 @@ def _normalize_user_path(raw: str) -> Path:
         drive = value[0].lower()
         value = f"/mnt/{drive}/" + value[3:].replace("\\", "/")
 
-    return Path(os.path.expanduser(value)).resolve(strict=True)
+    path = Path(os.path.expanduser(value))
+    candidates = (
+        [Path(base_dir).expanduser() / path for base_dir in base_dirs]
+        if not path.is_absolute()
+        else []
+    )
+    candidates.append(path)
+    for candidate in candidates:
+        try:
+            return candidate.resolve(strict=True)
+        except OSError:
+            continue
+    raise FileNotFoundError(value)
 
 
 def find_local_image_paths(text: str) -> tuple[Path, ...]:
@@ -78,6 +99,29 @@ def find_local_image_paths(text: str) -> tuple[Path, ...]:
         if path not in seen:
             seen.add(path)
             found.append(path)
+    return tuple(found)
+
+
+def find_tool_image_paths(
+    text: str,
+    base_dirs: Iterable[str | os.PathLike[str]] = (),
+) -> tuple[Path, ...]:
+    """Return image artifacts reported by tools, including extensionless files."""
+    found = list(find_local_image_paths(text))
+    seen = set(found)
+    for match in _TOOL_IMAGE_PATTERN.finditer(text or ""):
+        try:
+            path = _normalize_user_path(match.group("path"), base_dirs)
+        except (OSError, ValueError):
+            continue
+        if path in seen or not path.is_file():
+            continue
+        if path.suffix.lower() not in _IMAGE_EXTENSIONS:
+            width, height = _image_dimensions(path)
+            if not width or not height:
+                continue
+        seen.add(path)
+        found.append(path)
     return tuple(found)
 
 
@@ -204,12 +248,13 @@ def prepare_image_artifacts(
             if (
                 path in seen
                 or not path.is_file()
-                or path.suffix.lower() not in _IMAGE_EXTENSIONS
             ):
                 continue
             seen.add(path)
             size = path.stat().st_size
             width, height = _image_dimensions(path)
+            if path.suffix.lower() not in _IMAGE_EXTENSIONS and not (width and height):
+                continue
             if size > max_each or (width and height and width * height > max_pixels):
                 continue
             raw, mime = _provider_image_bytes(path)

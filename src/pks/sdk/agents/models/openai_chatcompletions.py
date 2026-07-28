@@ -562,14 +562,37 @@ class OpenAIChatCompletionsModel(Model):
 
     def _prepare_new_visual_artifacts(self, shared_context: str):
         """Return unseen images emitted by tools, handoffs, or shared context."""
-        from pks.util.vision import find_local_image_paths, prepare_image_artifacts
+        from pks.tools.common import _get_workspace_dir
+        from pks.util.vision import (
+            find_local_image_paths,
+            find_tool_image_paths,
+            prepare_image_artifacts,
+        )
 
         paths = []
         inline_count = 0
+        tool_workdirs: dict[str, str] = {}
+        default_workdir = _get_workspace_dir()
         start = min(self._pks_visual_history_cursor, len(self.message_history))
         for message in self.message_history[start:]:
             if not isinstance(message, dict):
                 continue
+            if message.get("role") == "assistant":
+                for tool_call in message.get("tool_calls") or []:
+                    if not isinstance(tool_call, dict):
+                        continue
+                    function = tool_call.get("function") or {}
+                    try:
+                        arguments = json.loads(function.get("arguments") or "{}")
+                    except (TypeError, ValueError):
+                        continue
+                    if not isinstance(arguments, dict):
+                        continue
+                    working_directory = arguments.get("working_directory")
+                    if working_directory:
+                        tool_workdirs[str(tool_call.get("id") or "")] = str(
+                            working_directory
+                        )
             if self._pks_message_has_image(message):
                 inline_count += sum(
                     1
@@ -578,8 +601,21 @@ class OpenAIChatCompletionsModel(Model):
                     and part.get("type") in {"input_image", "image_url"}
                 )
                 continue
-            paths.extend(find_local_image_paths(self._pks_message_text(message)))
-        paths.extend(find_local_image_paths(shared_context))
+            message_text = self._pks_message_text(message)
+            finder = (
+                find_tool_image_paths
+                if message.get("role") == "tool"
+                else find_local_image_paths
+            )
+            if finder is find_tool_image_paths:
+                workdirs = [
+                    tool_workdirs.get(str(message.get("tool_call_id") or "")),
+                    default_workdir,
+                ]
+                paths.extend(finder(message_text, filter(None, workdirs)))
+            else:
+                paths.extend(finder(message_text))
+        paths.extend(find_tool_image_paths(shared_context, (default_workdir,)))
 
         unseen = []
         fingerprints = []

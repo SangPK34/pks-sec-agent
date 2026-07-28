@@ -12,6 +12,7 @@ from pks.util.vision import (
     PreparedVisionInput,
     compact_vision_history,
     find_local_image_paths,
+    find_tool_image_paths,
     input_has_images,
     is_vision_rejection,
     prepare_image_artifacts,
@@ -89,6 +90,21 @@ def test_find_local_image_paths_accepts_wsl_explorer_path() -> None:
         )
     finally:
         image_path.unlink(missing_ok=True)
+
+
+def test_tool_image_detection_accepts_extensionless_file(tmp_path: Path) -> None:
+    image_path = tmp_path / "file"
+    Image.new("RGB", (20, 10), "white").save(image_path, "JPEG")
+
+    paths = find_tool_image_paths(
+        "file: JPEG image data, JFIF standard 1.01, 20x10",
+        (tmp_path,),
+    )
+    prepared = prepare_image_artifacts(paths)
+
+    assert paths == (image_path.resolve(),)
+    assert prepared.has_images
+    assert prepared.images[0].data_url.startswith("data:image/png;base64,")
 
 
 def test_history_cleanup_and_compaction_do_not_keep_base64(tmp_path: Path) -> None:

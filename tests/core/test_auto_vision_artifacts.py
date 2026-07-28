@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -15,8 +16,17 @@ def _write_png(path: Path) -> None:
     Image.new("RGB", (12, 8), "white").save(path, "PNG")
 
 
-def _append_tool_image(model: OpenAIChatCompletionsModel, path: Path) -> None:
+def _append_tool_image(
+    model: OpenAIChatCompletionsModel,
+    path: Path,
+    working_directory: Path | None = None,
+) -> None:
     call_id = "call_visual_test"
+    arguments = (
+        {"working_directory": str(working_directory)}
+        if working_directory is not None
+        else {}
+    )
     model.add_to_message_history(
         {
             "role": "assistant",
@@ -27,7 +37,7 @@ def _append_tool_image(model: OpenAIChatCompletionsModel, path: Path) -> None:
                     "type": "function",
                     "function": {
                         "name": "generic_linux_command",
-                        "arguments": "{}",
+                        "arguments": json.dumps(arguments),
                     },
                 }
             ],
@@ -109,6 +119,45 @@ async def test_new_tool_image_is_attached_once_without_prompt_keywords(
     assert vision_events[0].image_count == 1
     assert vision_events[0].mode == "vision_ocr"
     assert model._pks_vision_status is None
+
+
+@pytest.mark.asyncio
+async def test_extensionless_jpeg_from_tool_output_is_auto_attached(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    image_path = tmp_path / "file"
+    Image.new("RGB", (20, 10), "white").save(image_path, "JPEG")
+    model = OpenAIChatCompletionsModel(
+        model="openai/CAI",
+        openai_client=SimpleNamespace(),
+        agent_name="vision-extensionless-artifact",
+    )
+    monkeypatch.setattr(
+        "pks.tools.common._get_workspace_dir",
+        lambda: str(tmp_path),
+    )
+    _append_tool_image(model, Path("file"))
+    calls: list[list[dict[str, Any]]] = []
+
+    async def fake_direct(kwargs, *_args, **_kwargs):
+        calls.append(kwargs["messages"])
+        return SimpleNamespace()
+
+    monkeypatch.setattr(model, "_direct_httpx_completion", fake_direct)
+    monkeypatch.setattr(
+        PreparedVisionInput,
+        "ocr_evidence",
+        lambda _self: "OCR assist evidence",
+    )
+    monkeypatch.setattr(
+        "pks.sdk.agents.models.openai_chatcompletions.OUTPUT.emit",
+        lambda _event: None,
+    )
+
+    await _fetch(model)
+
+    assert _has_inline_image(calls[0])
+    assert "base64," not in str(model.message_history)
 
 
 @pytest.mark.asyncio

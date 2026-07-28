@@ -99,7 +99,11 @@ class TestMultilinePromptConfig:
         )
 
     def test_command_code_style_input_frame_and_user_echo(self):
+        from types import SimpleNamespace
+
         from pks.repl.ui.prompt import (
+            COMPLETION_MENU_ROWS,
+            _completion_menu_rows,
             REPL_INPUT_PLACEHOLDER,
             _input_footer,
             _input_frame_message,
@@ -133,6 +137,13 @@ class TestMultilinePromptConfig:
         ]
         assert system_fragments[0][0] == "class:system-toolbar"
         assert _wrapped_input_rows("x" * 100, 40) == 3
+        session = SimpleNamespace(
+            default_buffer=SimpleNamespace(
+                complete_state=SimpleNamespace(completions=list(range(20)))
+            )
+        )
+        assert COMPLETION_MENU_ROWS == 8
+        assert _completion_menu_rows(session) == 8
         styles = dict(create_prompt_style().style_rules)
         assert "#ffffff" in styles["user-message"]
         assert "nobold" in styles["user-message"]
