@@ -124,7 +124,7 @@ class OpenAIResponsesModel(Model):
 
         with response_span(disabled=tracing.is_disabled()) as span_response:
             try:
-                async with model_wait_hints():
+                async with model_wait_hints() as wait_hint:
                     response = await self._fetch_response(
                         system_instructions,
                         input,
@@ -133,6 +133,10 @@ class OpenAIResponsesModel(Model):
                         output_schema,
                         handoffs,
                         stream=False,
+                    )
+                    response_usage = getattr(response, "usage", None)
+                    wait_hint.set_output_tokens(
+                        getattr(response_usage, "output_tokens", None)
                     )
 
                 if _debug.DONT_LOG_MODEL_DATA:

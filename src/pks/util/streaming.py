@@ -1521,6 +1521,36 @@ def _prepare_terminal_for_final_agent_output() -> None:
         pass
 
 
+def _print_nonstream_model_wait_summary(console: Console) -> None:
+    """Resolve the non-stream ``↓ …`` indicator with the provider's final count."""
+    try:
+        from pks.repl.ui.compact_renderer import get_compact_handler
+
+        if get_compact_handler() is not None:
+            return
+    except Exception:
+        pass
+    try:
+        from pks.util.wait_hints import (
+            consume_last_model_output_tokens,
+            consume_last_model_wait_duration,
+        )
+
+        duration = consume_last_model_wait_duration()
+        output_tokens = consume_last_model_output_tokens()
+    except Exception:
+        return
+    if output_tokens is None:
+        return
+    seconds = max(1, round(duration))
+    unit = "second" if seconds == 1 else "seconds"
+    line = Text()
+    line.append("✻ ", style="bold #58F9FF")
+    line.append(f"Thought for {seconds} {unit}", style="bold #58F9FF")
+    line.append(f"  ·  ↓ {output_tokens}", style="dim")
+    console.print(line)
+
+
 def cli_print_agent_messages(
     agent_name,
     message,
@@ -1786,6 +1816,7 @@ def cli_print_agent_messages(
 
     if is_final_response and parsed_message:
         _prepare_terminal_for_final_agent_output()
+        _print_nonstream_model_wait_summary(console)
         # Final response: wrap body in a green bordered panel with header as title
         # Apply green/white markdown theme for consistent styling
         from rich import box
@@ -4213,7 +4244,7 @@ def create_claude_thinking_context(agent_name, counter, model):
                 ),
                 console=Console(stderr=True, soft_wrap=False),
                 spinner="star",
-                spinner_style="bold #9d7cff",
+                spinner_style="bold #58F9FF",
                 refresh_per_second=12,
             )
             status.start()

@@ -190,7 +190,18 @@ def test_model_wait_renderable_matches_command_code_chrome():
     assert rendered.plain.startswith("✶ ")
     assert "Architecting…" in rendered.plain
     assert "Ctrl+C to interrupt" in rendered.plain
-    assert "↓ 0" in rendered.plain
+    assert "↓" not in rendered.plain
+
+
+def test_nonstream_model_wait_shows_pending_then_final_output_count():
+    state = {"show_output_tokens": True}
+    pending = wait_hints._model_body(1.0, state)
+    assert pending.endswith("↓ …")
+
+    loop = wait_hints._WaitHintLoop(mode="model", show_output_tokens=True)
+    loop.set_output_tokens(123)
+    final = wait_hints._model_body(1.0, loop._state)
+    assert final.endswith("↓ 123")
 
 
 def test_model_wait_renderable_animates_icon_and_badge():
@@ -217,6 +228,11 @@ def test_compact_handler_prints_thought_and_worked_notes(monkeypatch):
         "consume_last_model_wait_duration",
         lambda: 1.2,
     )
+    monkeypatch.setattr(
+        wait_hints,
+        "consume_last_model_output_tokens",
+        lambda: 42,
+    )
     monkeypatch.setattr("pks.repl.ui.compact_renderer.time.monotonic", lambda: 13.0)
     monkeypatch.setattr("pks.repl.ui.compact_renderer.TASK_REGISTRY.for_turn", lambda: [])
     handler._turn_started_monotonic = 10.0
@@ -226,6 +242,7 @@ def test_compact_handler_prints_thought_and_worked_notes(monkeypatch):
 
     text = output.getvalue()
     assert "✻ Thought for 1 second [Ctrl+O to expand]" in text
+    assert "↓ 42" in text
     assert "✻ Worked for 3.0s" in text
 
 

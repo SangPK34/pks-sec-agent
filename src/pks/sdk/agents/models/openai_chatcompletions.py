@@ -876,7 +876,7 @@ class OpenAIChatCompletionsModel(Model):
                 # stays published across attempts (no flicker between iterations).
                 # The ``try/finally`` clears any retry/pacing overlay even when
                 # ``_fetch_response`` raises a typed error that propagates out.
-                async with model_wait_hints():
+                async with model_wait_hints() as wait_hint:
                     try:
                         while True:
                             response = await self._fetch_response(
@@ -889,6 +889,10 @@ class OpenAIChatCompletionsModel(Model):
                                 span_generation,
                                 tracing,
                                 stream=False,
+                            )
+                            response_usage = getattr(response, "usage", None)
+                            wait_hint.set_output_tokens(
+                                getattr(response_usage, "completion_tokens", None)
                             )
                             first_choice = _get_first_choice(response)
                             if not first_choice:
@@ -1667,6 +1671,11 @@ class OpenAIChatCompletionsModel(Model):
 
                 # Get token count estimate before API call for consistent counting
                 estimated_input_tokens, _ = count_tokens_with_tiktoken(converted_messages)
+                max_tok = self._get_model_max_tokens(str(self.model))
+                if max_tok > 0:
+                    os.environ["PKS_CONTEXT_USAGE"] = str(
+                        min(1.0, max(0.0, estimated_input_tokens / max_tok))
+                    )
 
                 # Check if auto-compaction is needed
                 input, system_instructions, compacted = await self._auto_compact_if_needed(estimated_input_tokens, input, system_instructions)

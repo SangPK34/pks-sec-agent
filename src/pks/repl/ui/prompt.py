@@ -6,7 +6,7 @@ import shutil
 import sys
 import time
 from functools import lru_cache
-from prompt_toolkit import prompt, print_formatted_text  # pylint: disable=import-error
+from prompt_toolkit import PromptSession, print_formatted_text  # pylint: disable=import-error
 from prompt_toolkit.history import FileHistory  # pylint: disable=import-error
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory  # pylint: disable=import-error # noqa: E501
 from prompt_toolkit.styles import Style  # pylint: disable=import-error
@@ -20,7 +20,11 @@ from pks.repl.commands import FuzzyCommandCompleter
 PKS_GREEN = "#58F9FF"
 
 # Headless REPL input placeholder (grey italic when buffer empty; prompt_toolkit CLI only).
-REPL_INPUT_PLACEHOLDER = "Type here, or ?"
+REPL_INPUT_PLACEHOLDER = "Ask your question..."
+INPUT_PURPLE_BG = "#4d3a80"
+INPUT_PURPLE_FG = "#ffffff"
+INPUT_BORDER = "#3f4652"
+INPUT_MUTED = "#778195"
 
 _REPL_STDIN_EXHAUSTED_PENDING = False
 
@@ -92,15 +96,103 @@ def _print_separator():
     pass
 
 
+def _input_frame_message():
+    width = max(20, _terminal_width() - 2)
+    return FormattedText(
+        [
+            ("class:input-border", "─" * width + "\n"),
+            ("class:input-prompt", "❯ "),
+        ]
+    )
+
+
+def _input_footer():
+    width = max(20, _terminal_width() - 2)
+    return FormattedText([("class:input-border", "─" * width)])
+
+
+def _system_toolbar(toolbar_func):
+    fragments = []
+    original = toolbar_func() if toolbar_func else []
+    if original:
+        fragments.extend(
+            ("class:system-toolbar", text)
+            for _style, text, *_ in to_formatted_text(original)
+        )
+    return FormattedText(fragments)
+
+
+def _wrapped_input_rows(text: str, terminal_width: int) -> int:
+    from prompt_toolkit.utils import get_cwidth
+
+    content_width = max(8, terminal_width - 4)
+    rows = 0
+    for line in text.split("\n"):
+        cell_width = get_cwidth(line)
+        rows += max(1, (cell_width + content_width - 1) // content_width)
+    return max(1, rows)
+
+
+def _install_prompt_layout(session: PromptSession, toolbar_func) -> None:
+    """Keep the input footer next to the buffer and pin system status at the bottom."""
+    from prompt_toolkit.filters import is_done, renderer_height_is_known
+    from prompt_toolkit.layout.containers import ConditionalContainer, Window
+    from prompt_toolkit.layout.controls import FormattedTextControl
+    from prompt_toolkit.layout.dimension import Dimension
+
+    layout = session.app.layout
+    input_window = layout.current_window
+
+    def _input_height():
+        terminal = shutil.get_terminal_size((80, 24))
+        rows = _wrapped_input_rows(
+            session.default_buffer.text,
+            terminal.columns,
+        )
+        return Dimension.exact(min(rows, max(3, terminal.lines - 8)))
+
+    input_window.height = _input_height
+    root = layout.container
+    root.children.extend(
+        [
+            Window(),
+            ConditionalContainer(
+                Window(
+                    FormattedTextControl(lambda: _system_toolbar(toolbar_func)),
+                    height=1,
+                    dont_extend_height=True,
+                    style="class:system-toolbar",
+                ),
+                filter=~is_done & renderer_height_is_known,
+            ),
+        ]
+    )
+
+
+def _submitted_user_message(value: str):
+    fragments = [("", "🤡 ")]
+    lines = value.splitlines() or [value]
+    for index, line in enumerate(lines):
+        if index:
+            fragments.extend([("", "\n   ")])
+        fragments.append(("class:user-message", f" ❯ {line} "))
+    return FormattedText(fragments)
+
+
 def create_prompt_style():
     """Create a style for the CLI."""
     return Style.from_dict(
         {
-            "prompt": "bold #33d17a",
-            "": "#7ee787",
-            "placeholder": "#666666 italic",
+            "input-border": INPUT_BORDER,
+            "input-prompt": "bold #e5e7eb",
+            "": "#e5e7eb",
+            "placeholder": INPUT_MUTED,
             "bottom-separator": PKS_GREEN,
             "bottom-toolbar": "default noreverse",
+            "system-toolbar": f"{INPUT_MUTED} nobold noitalic",
+            "user-message": (
+                f"{INPUT_PURPLE_FG} bg:{INPUT_PURPLE_BG} nobold noitalic"
+            ),
             # PKS-themed completion popup: deep green background + white text,
             # with PKS green highlight for selected row.
             "completion-menu": "bg:#0f1b16 #e8efe9",
@@ -199,19 +291,13 @@ def get_user_input(command_completer, key_bindings, history_file, toolbar_func, 
         _tty_fd = None
         _tty_attrs_before_prompt = None
 
-    # Wrap the original toolbar to prepend a green separator line
     def _toolbar_with_separator():
-        original = toolbar_func() if toolbar_func else []
-        if isinstance(original, list):
-            return original
-        if original:
-            return list(to_formatted_text(original))
-        return []
+        return _input_footer()
 
     # Get user input with all features
     try:
-        result = prompt(
-            [("class:prompt", "\n🤡 YOU > ")],
+        session = PromptSession(
+            message=_input_frame_message,
             placeholder=FormattedText([("class:placeholder", REPL_INPUT_PLACEHOLDER)]),
             completer=command_completer,
             style=create_prompt_style(),
@@ -228,7 +314,10 @@ def get_user_input(command_completer, key_bindings, history_file, toolbar_func, 
             multiline=True,  # Enable multiline input
             rprompt=get_rprompt,
             color_depth=None,  # Auto-detect color support
+            erase_when_done=True,
         )
+        _install_prompt_layout(session, toolbar_func)
+        result = session.prompt()
     except EOFError:
         global _REPL_STDIN_EXHAUSTED_PENDING
         try:
@@ -248,10 +337,11 @@ def get_user_input(command_completer, key_bindings, history_file, toolbar_func, 
             except Exception:
                 pass
 
-    # Print bottom separator only when user submitted non-empty input,
-    # so that empty Enter produces a single separator between prompts.
     if result and result.strip():
-        _print_separator()
+        print_formatted_text(
+            _submitted_user_message(result),
+            style=create_prompt_style(),
+        )
 
     print("\n")
     return result

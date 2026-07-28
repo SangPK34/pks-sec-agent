@@ -412,9 +412,13 @@ class CompactCLIHandler:
 
     def _on_turn_start(self, event: TurnStartEvent) -> None:
         try:
-            from pks.util.wait_hints import consume_last_model_wait_duration
+            from pks.util.wait_hints import (
+                consume_last_model_output_tokens,
+                consume_last_model_wait_duration,
+            )
 
             consume_last_model_wait_duration()
+            consume_last_model_output_tokens()
         except Exception:
             pass
         with self._lock:
@@ -490,11 +494,16 @@ class CompactCLIHandler:
         if self._thought_printed:
             return
         try:
-            from pks.util.wait_hints import consume_last_model_wait_duration
+            from pks.util.wait_hints import (
+                consume_last_model_output_tokens,
+                consume_last_model_wait_duration,
+            )
 
             duration = consume_last_model_wait_duration()
+            output_tokens = consume_last_model_output_tokens()
         except Exception:
             duration = 0.0
+            output_tokens = None
         thinking_records = [
             record
             for record in (TASK_REGISTRY.for_turn() or [])
@@ -508,9 +517,11 @@ class CompactCLIHandler:
         seconds = max(1, round(duration))
         unit = "second" if seconds == 1 else "seconds"
         line = Text()
-        line.append("✻ ", style="bold #c5adff")
-        line.append(f"Thought for {seconds} {unit} ", style="bold #d7c4ff")
+        line.append("✻ ", style="bold #58F9FF")
+        line.append(f"Thought for {seconds} {unit} ", style="bold #58F9FF")
         line.append("[Ctrl+O to expand]", style=GREY_HINT)
+        if output_tokens is not None:
+            line.append(f"  ·  ↓ {output_tokens}", style=GREY_HINT)
         self._console.print(line)
         self._thought_printed = True
 

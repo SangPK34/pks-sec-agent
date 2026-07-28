@@ -275,7 +275,7 @@ def _build_session_banner_panel(
             title_align="left",
             border_style=_PKS_GREEN,
             padding=(0, 1),
-            subtitle="[bold white]Anh Xang da dennnnn!!! 👾[/bold white]",
+            subtitle="[bold white]Anh Xang da dennnnn!!! 🤡[/bold white]",
             subtitle_align="left",
         )
     return Panel(
@@ -284,7 +284,7 @@ def _build_session_banner_panel(
         title_align="left",
         border_style=_PKS_GREEN,
         padding=(0, 1),
-        subtitle="[bold white]Anh Xang da dennnnn!!! 👾[/bold white]",
+        subtitle="[bold white]Anh Xang da dennnnn!!! 🤡[/bold white]",
         subtitle_align="left",
     )
 

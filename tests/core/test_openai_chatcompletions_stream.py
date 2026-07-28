@@ -77,6 +77,12 @@ async def test_stream_response_yields_events_for_text_content(monkeypatch) -> No
 
     monkeypatch.setattr(OpenAIChatCompletionsModel, "_fetch_response", patched_fetch_response)
     model = OpenAIProvider(use_responses=False).get_model(pks_model)
+    monkeypatch.setattr(
+        "pks.sdk.agents.models.openai_chatcompletions.count_tokens_with_tiktoken",
+        lambda _messages: (25, 0),
+    )
+    monkeypatch.setattr(model, "_get_model_max_tokens", lambda _name: 100)
+    monkeypatch.setenv("PKS_CONTEXT_USAGE", "0")
     output_events = []
     async for event in model.stream_response(
         system_instructions=None,
@@ -119,6 +125,7 @@ async def test_stream_response_yields_events_for_text_content(monkeypatch) -> No
     assert completed_resp.usage.input_tokens == 7
     assert completed_resp.usage.output_tokens == 5
     assert completed_resp.usage.total_tokens == 12
+    assert float(os.environ["PKS_CONTEXT_USAGE"]) == pytest.approx(0.25)
 
 
 @pytest.mark.allow_call_model_methods

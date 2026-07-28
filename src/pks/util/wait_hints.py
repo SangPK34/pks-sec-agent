@@ -119,6 +119,7 @@ _BODY_LOCK = threading.Lock()
 _current_model_body: str | None = None
 _current_tool_body: str | None = None
 _last_model_wait_duration = 0.0
+_last_model_output_tokens: int | None = None
 # True when the compact REPL live block is rendering. While set:
 #   * mode="model" loops do NOT spawn a Rich Status (compact draws the body)
 #   * mode="tool" loops publish only the plain body; legacy footer refreshes
@@ -158,6 +159,15 @@ def consume_last_model_wait_duration() -> float:
         duration = _last_model_wait_duration
         _last_model_wait_duration = 0.0
     return duration
+
+
+def consume_last_model_output_tokens() -> int | None:
+    """Return and clear the last non-stream response's output-token count."""
+    global _last_model_output_tokens
+    with _BODY_LOCK:
+        tokens = _last_model_output_tokens
+        _last_model_output_tokens = None
+    return tokens
 
 
 def set_compact_live_owner(active: bool) -> None:
@@ -343,7 +353,11 @@ def _model_body(elapsed: float, state: dict[str, Any]) -> str:
         if state.get("phase") == "tool_result"
         else f"{int(elapsed)}s"
     )
-    return f"{action}  Ctrl+C to interrupt  •  {elapsed_text}"
+    body = f"{action}  Ctrl+C to interrupt  •  {elapsed_text}"
+    if state.get("show_output_tokens"):
+        tokens = state.get("output_tokens")
+        body += f"  •  ↓ {tokens if tokens is not None else '…'}"
+    return body
 
 
 def _tool_body(
@@ -379,6 +393,7 @@ class _WaitHintLoop:
         exec_summary: str = "",
         model_phase: str = "",
         agent_name: str = "",
+        show_output_tokens: bool = False,
     ) -> None:
         self._mode = mode  # "model" | "tool"
         self._tool_label = tool_label
@@ -392,6 +407,8 @@ class _WaitHintLoop:
             self._state["phase"] = model_phase
         if agent_name:
             self._state["agent_name"] = agent_name
+        if show_output_tokens:
+            self._state["show_output_tokens"] = True
         self._status: Status | None = None
         self._console: Console | None = None
         # External (synchronous) pause: when set, the run loop yields the
@@ -434,7 +451,7 @@ class _WaitHintLoop:
                 _primary_tool_loop = None
 
     async def start(self) -> None:
-        global _active_stderr_wait_loops
+        global _active_stderr_wait_loops, _last_model_output_tokens
         if self._disposed:
             return
         if self._mode == "tool":
@@ -462,6 +479,8 @@ class _WaitHintLoop:
         if self._mode == "model":
             _active_stderr_wait_loops += 1
             try:
+                with _BODY_LOCK:
+                    _last_model_output_tokens = None
                 self._console = Console(stderr=True, soft_wrap=False)
                 # Always publish the initial body so the compact renderer can
                 # show it immediately even before the first tick.
@@ -478,7 +497,7 @@ class _WaitHintLoop:
                         initial,
                         console=self._console,
                         spinner="star",
-                        spinner_style="bold #9d7cff",
+                        spinner_style="bold #58F9FF",
                         refresh_per_second=12,
                     )
                     self._status.start()
@@ -572,7 +591,7 @@ class _WaitHintLoop:
         self._task = asyncio.create_task(_run(), name="pks_wait_hints")
 
     async def stop(self) -> None:
-        global _last_model_wait_duration
+        global _last_model_output_tokens, _last_model_wait_duration
         if self._disposed:
             return
         self._disposed = True
@@ -600,7 +619,23 @@ class _WaitHintLoop:
             duration = max(0.0, time.monotonic() - self._started_monotonic)
             with _BODY_LOCK:
                 _last_model_wait_duration = duration
+                if self._state.get("show_output_tokens"):
+                    tokens = self._state.get("output_tokens")
+                    _last_model_output_tokens = (
+                        max(0, int(tokens)) if tokens is not None else None
+                    )
+                else:
+                    _last_model_output_tokens = None
         self._release_primary()
+
+    def set_output_tokens(self, value: int | None) -> None:
+        """Publish the final non-stream token count once the provider returns."""
+        if value is None:
+            return
+        try:
+            self._state["output_tokens"] = max(0, int(value))
+        except (TypeError, ValueError):
+            return
 
     def force_pause(self) -> None:
         """Synchronously yield the terminal until :meth:`force_resume`.
@@ -655,7 +690,7 @@ class _WaitHintLoop:
                     initial,
                     console=self._console,
                     spinner="star",
-                    spinner_style="bold #9d7cff",
+                    spinner_style="bold #58F9FF",
                     refresh_per_second=12,
                 )
                 self._status.start()
@@ -677,10 +712,14 @@ def clear_wait_hints() -> None:
 
 @asynccontextmanager
 async def model_wait_hints(model_phase: str = ""):
-    loop = _WaitHintLoop(mode="model", model_phase=model_phase)
+    loop = _WaitHintLoop(
+        mode="model",
+        model_phase=model_phase,
+        show_output_tokens=True,
+    )
     await loop.start()
     try:
-        yield
+        yield loop
     finally:
         await loop.stop()
 

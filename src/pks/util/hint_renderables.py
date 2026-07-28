@@ -24,10 +24,10 @@ _PIPE_FRAMES = ("|", "/", "—", "\\")
 _BRAILLE_DOTS_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
 _ACTIVITY_ICON_FRAMES = ("✶", "✸", "✹", "✺", "✹", "✷")
 STARTUP_HINT_SPINNER_HZ = 12
-ACTIVITY_BG = "#392d63"
-ACTIVITY_FG = "#c5adff"
-ACTIVITY_HIGHLIGHT = "#f4efff"
-ACTIVITY_DIM = "#9d83e6"
+ACTIVITY_BG = "#00363f"
+ACTIVITY_FG = "#58F9FF"
+ACTIVITY_HIGHLIGHT = "#e8feff"
+ACTIVITY_DIM = "#37bfc7"
 
 
 def terminal_columns() -> int:
@@ -117,7 +117,7 @@ def build_compact_live_wait_hint_row(body: str, *, frame_tick: int) -> Text:
         action, suffix = msg.split("  Ctrl+C to interrupt  •  ", 1)
         _append_activity_badge(line, action, frame_tick)
         line.append("  Ctrl+C to interrupt  •  ", style="dim")
-        line.append(f"{suffix} • ↓ 0", style="dim")
+        line.append(suffix, style="dim")
         return line
     line.append_text(_pks_brand_badge())
     line.append(" | ", style="dim")
@@ -144,7 +144,7 @@ def build_model_wait_hint_renderable(
             line.append(" ")
         _append_activity_badge(line, action, frame_tick)
         line.append("  Ctrl+C to interrupt  •  ", style="dim")
-        line.append(f"{suffix} • ↓ 0", style="dim")
+        line.append(suffix, style="dim")
     else:
         line.append(msg, style=f"bold {ACTIVITY_FG}")
     return line

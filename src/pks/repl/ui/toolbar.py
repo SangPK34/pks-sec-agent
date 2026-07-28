@@ -23,7 +23,8 @@ toolbar_cache = {
     'html': "",
     'last_update': datetime.datetime.now(),
     'refresh_interval': 5,  # Refresh every 5 seconds
-    'context_warning_shown': False  # Track if we've shown context warning
+    'context_warning_shown': False,  # Track if we've shown context warning
+    'context_env': None,
 }
 
 # Cache for system information that rarely changes
@@ -60,6 +61,36 @@ def get_terminal_width():
         return shutil.get_terminal_size().columns
     except:
         return 80  # Default width
+
+
+def _format_context_usage(raw_value: str) -> str:
+    try:
+        context_pct = max(0.0, float(raw_value or 0)) * 100
+    except ValueError:
+        context_pct = 0.0
+    if 0 < context_pct < 0.1:
+        return "<0.1%"
+    return f"{context_pct:.1f}%"
+
+
+def _refresh_cached_context(raw_value: str) -> None:
+    """Update only the context field without rerunning slow environment probes."""
+    html = toolbar_cache.get('html')
+    value = getattr(html, 'value', '') if html else ''
+    prefix = "<ansicyan>Context:</ansicyan> <ansigreen>"
+    start = value.find(prefix)
+    if start < 0:
+        return
+    value_start = start + len(prefix)
+    value_end = value.find("</ansigreen>", value_start)
+    if value_end < 0:
+        return
+    toolbar_cache['html'] = HTML(
+        value[:value_start]
+        + _format_context_usage(raw_value)
+        + value[value_end:]
+    )
+    toolbar_cache['context_env'] = raw_value
 
 
 def update_toolbar_in_background():
@@ -187,11 +218,13 @@ def update_toolbar_in_background():
         trace_color = "ansigreen" if tracing_enabled else "ansigray"
 
         # Build context string
-        context_str = f"{context_usage*100:.1f}%"
+        context_raw = os.getenv("PKS_CONTEXT_USAGE", "0")
+        context_str = _format_context_usage(context_raw)
         
         # Build toolbar (same for all sizes as user requested a specific format)
         toolbar_cache['html'] = HTML(
             f"<ansiyellow>Model:</ansiyellow> <ansigreen>{os.getenv('PKS_MODEL', 'default')}</ansigreen> | "
+            f"<ansicyan>Agent:</ansicyan> <ansigreen>{os.getenv('PKS_AGENT_TYPE', 'root_agent')}</ansigreen> | "
             f"<ansicyan>Context:</ansicyan> <ansigreen>{context_str}</ansigreen> | "
             f"<ansicyan>AutoCompact:</ansicyan> <{auto_compact_color}>{auto_compact_str}</{auto_compact_color}> | "
             f"<ansicyan>Memory:</ansicyan> <{memory_color}>{memory_str}</{memory_color}> | "
@@ -201,6 +234,7 @@ def update_toolbar_in_background():
             f"<ansiyellow>Turns:</ansiyellow> <ansiblue>{os.getenv('PKS_MAX_TURNS', 'inf')}</ansiblue>"
         )
         toolbar_cache['last_update'] = datetime.datetime.now()
+        toolbar_cache['context_env'] = context_raw
     except Exception:  # pylint: disable=broad-except
         # If there's an error, set a simple toolbar
         toolbar_cache['html'] = HTML(
@@ -230,6 +264,10 @@ def get_bottom_toolbar():
 
 def get_toolbar_with_refresh():
     """Get toolbar with refresh control."""
+    context_raw = os.getenv("PKS_CONTEXT_USAGE", "0")
+    if toolbar_cache.get('context_env') != context_raw:
+        _refresh_cached_context(context_raw)
+
     now = datetime.datetime.now()
     seconds_elapsed = (now - toolbar_cache['last_update']).total_seconds()
     

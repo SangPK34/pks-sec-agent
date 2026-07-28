@@ -14,6 +14,10 @@ This allows pasted multiline content to be preserved while Enter still submits.
 from __future__ import annotations
 
 
+def _plain(formatted_text) -> str:
+    return "".join(fragment[1] for fragment in formatted_text)
+
+
 class TestMultilinePromptConfig:
     """Regression tests for multiline prompt configuration."""
 
@@ -93,6 +97,79 @@ class TestMultilinePromptConfig:
         assert '_print_separator' in source, (
             'REGRESSION: ? binding must redraw the green separator after the shortcuts panel.'
         )
+
+    def test_command_code_style_input_frame_and_user_echo(self):
+        from pks.repl.ui.prompt import (
+            REPL_INPUT_PLACEHOLDER,
+            _input_footer,
+            _input_frame_message,
+            _submitted_user_message,
+            _system_toolbar,
+            _wrapped_input_rows,
+            create_prompt_style,
+        )
+
+        assert REPL_INPUT_PLACEHOLDER == "Ask your question..."
+        assert "❯ " in _plain(_input_frame_message())
+        assert "?" not in _plain(_input_footer())
+        assert set(_plain(_input_footer())) == {"─"}
+        submitted = _plain(_submitted_user_message("hello"))
+        assert submitted.startswith("🤡 ")
+        assert "❯ hello" in submitted
+        toolbar = _system_toolbar(
+            lambda: [("ansired", "Model: test | Context: 1%")]
+        )
+        assert "Model: test | Context: 1%" in _plain(toolbar)
+        system_fragments = [
+            fragment for fragment in toolbar if "Model: test" in fragment[1]
+        ]
+        assert system_fragments[0][0] == "class:system-toolbar"
+        assert _wrapped_input_rows("x" * 100, 40) == 3
+        styles = dict(create_prompt_style().style_rules)
+        assert "#ffffff" in styles["user-message"]
+        assert "nobold" in styles["user-message"]
+
+    def test_framed_prompt_uses_prompt_session_api(
+        self,
+        monkeypatch,
+        tmp_path,
+    ):
+        from prompt_toolkit import PromptSession
+        from prompt_toolkit.input.defaults import create_pipe_input
+        from prompt_toolkit.output import DummyOutput
+
+        import pks.repl.ui.prompt as prompt_module
+        from pks.repl.ui.keybindings import create_key_bindings
+
+        current_text = [""]
+        real_session = PromptSession
+        sessions = []
+        with create_pipe_input() as pipe_input:
+            def _session_factory(**kwargs):
+                session = real_session(
+                    input=pipe_input,
+                    output=DummyOutput(),
+                    **kwargs,
+                )
+                sessions.append(session)
+                return session
+
+            monkeypatch.setattr(
+                prompt_module,
+                "PromptSession",
+                _session_factory,
+            )
+            pipe_input.send_text("hello\r")
+            result = prompt_module.get_user_input(
+                None,
+                create_key_bindings(current_text),
+                tmp_path / "history",
+                lambda: [],
+                current_text,
+            )
+
+        assert result == "hello"
+        assert len(sessions[0].app.layout.container.children) == 8
 
 
 class TestMultilineInputBehavior:
