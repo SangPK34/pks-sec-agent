@@ -31,7 +31,8 @@ from pks.util.vision import (
     compact_vision_history,
     input_has_images,
     is_vision_rejection,
-    prepare_vision_input,
+    prepare_agent_vision_input,
+    remember_recent_agent_images,
     remove_pending_vision_history,
 )
 
@@ -355,7 +356,7 @@ class TerminalRunner:
                     self.display_context.interaction_counter += 1
 
                 # New user turn only — history is merged inside get_response.
-                prepared_vision = prepare_vision_input(user_input)
+                prepared_vision = prepare_agent_vision_input(user_input, self.agent)
                 turn_input: Union[str, List[Dict[str, Any]]] = (
                     prepared_vision.model_input
                 )
@@ -392,11 +393,15 @@ class TerminalRunner:
                         )
                         result = await self.current_task
                 finally:
+                    last_agent = getattr(result, "last_agent", None)
                     if prepared_vision.has_images:
                         compact_vision_history(self.agent, prepared_vision)
-                        last_agent = getattr(result, "last_agent", None)
                         if last_agent is not None and last_agent is not self.agent:
                             compact_vision_history(last_agent, prepared_vision)
+                    remember_recent_agent_images(
+                        self.agent,
+                        last_agent or self.agent,
+                    )
         except asyncio.CancelledError:
             # This is expected when cancelling - just log it
             self.logger.info(f"Command execution cancelled in terminal {self.config.terminal_number}")

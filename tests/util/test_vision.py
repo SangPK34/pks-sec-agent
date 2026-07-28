@@ -14,14 +14,17 @@ from pks.util.vision import (
     find_local_image_paths,
     input_has_images,
     is_vision_rejection,
+    prepare_agent_vision_input,
     prepare_vision_input,
+    remember_recent_agent_images,
     remove_pending_vision_history,
 )
 from pks.sdk.agents.run_to_jsonl import _sanitize_messages_for_log
 
 
 def _write_png(path: Path) -> None:
-    Image.new("RGB", (8, 6), "white").save(path, "PNG")
+    image_format = "JPEG" if path.suffix.lower() in {".jpg", ".jpeg"} else "PNG"
+    Image.new("RGB", (8, 6), "white").save(path, image_format)
 
 
 def test_prepare_local_image_as_multimodal_input(tmp_path: Path) -> None:
@@ -57,6 +60,51 @@ def test_prepare_vision_can_be_disabled(
 
     assert prepared.model_input == text
     assert not prepared.has_images
+
+
+def test_visual_followup_attaches_latest_specialist_image(tmp_path: Path) -> None:
+    old_image = tmp_path / "old.png"
+    latest_image = tmp_path / "fixed.jpg"
+    _write_png(old_image)
+    _write_png(latest_image)
+    source_agent = SimpleNamespace(
+        name="CTF agent",
+        model=SimpleNamespace(
+            message_history=[
+                {"role": "tool", "content": f"created {old_image}"},
+                {
+                    "role": "tool",
+                    "content": f"{latest_image}: JPEG image data, 800x500",
+                },
+            ]
+        ),
+    )
+    root_agent = SimpleNamespace(
+        name="Root Agent",
+        model=SimpleNamespace(message_history=[]),
+    )
+
+    remember_recent_agent_images(root_agent, source_agent)
+    prepared = prepare_agent_vision_input("bạn có thể nhìn ảnh ko", root_agent)
+
+    assert prepared.has_images
+    assert prepared.images[0].path == latest_image.resolve()
+    assert "most recent local image" in str(prepared.model_input)
+
+
+def test_non_visual_followup_does_not_attach_cached_image(tmp_path: Path) -> None:
+    image_path = tmp_path / "fixed.jpg"
+    _write_png(image_path)
+    agent = SimpleNamespace(
+        name="Root Agent",
+        model=SimpleNamespace(message_history=[]),
+        _pks_recent_images=(image_path,),
+    )
+
+    prepared = prepare_agent_vision_input("bug nào mạnh nhất?", agent)
+
+    assert not prepared.has_images
+    assert prepared.model_input == "bug nào mạnh nhất?"
 
 
 def test_find_local_image_paths_accepts_wsl_explorer_path() -> None:

@@ -81,7 +81,8 @@ from pks.util.vision import (
     compact_vision_history,
     input_has_images,
     is_vision_rejection,
-    prepare_vision_input,
+    prepare_agent_vision_input,
+    remember_recent_agent_images,
     remove_pending_vision_history,
 )
 from litellm.exceptions import RateLimitError, Timeout
@@ -1387,7 +1388,7 @@ def _record_shared_turn_context(result) -> None:
 def _run_single_agent(agent, conversation_input, console, force_until_flag, ctf_global):
     stream = _get_config().stream  # [S] centralised config
     prepared = (
-        prepare_vision_input(conversation_input)
+        prepare_agent_vision_input(conversation_input, agent)
         if isinstance(conversation_input, str)
         else PreparedVisionInput("", conversation_input)
     )
@@ -1423,11 +1424,12 @@ def _run_single_agent(agent, conversation_input, console, force_until_flag, ctf_
                 ctf_global,
             )
         finally:
+            last_agent = getattr(result, "last_agent", None)
             if prepared.has_images:
                 compact_vision_history(agent, prepared)
-                last_agent = getattr(result, "last_agent", None)
                 if last_agent is not None and last_agent is not agent:
                     compact_vision_history(last_agent, prepared)
+            remember_recent_agent_images(agent, last_agent or agent)
 
 
 def _run_streamed(agent, conversation_input, console, force_until_flag, ctf_global):

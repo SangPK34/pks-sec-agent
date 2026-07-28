@@ -44,7 +44,11 @@ def test_headless_retries_once_with_ocr_after_vision_rejection(
         return SimpleNamespace(last_agent=agent)
 
     monkeypatch.setattr(cli_headless, "_get_config", lambda: SimpleNamespace(stream=True))
-    monkeypatch.setattr(cli_headless, "prepare_vision_input", lambda _text: prepared)
+    monkeypatch.setattr(
+        cli_headless,
+        "prepare_agent_vision_input",
+        lambda _text, _agent: prepared,
+    )
     monkeypatch.setattr(cli_headless, "_run_streamed", fake_run)
     monkeypatch.setattr(
         cli_headless,
@@ -55,6 +59,11 @@ def test_headless_retries_once_with_ocr_after_vision_rejection(
         cli_headless,
         "compact_vision_history",
         lambda *_args: compacted.append(True),
+    )
+    monkeypatch.setattr(
+        cli_headless,
+        "remember_recent_agent_images",
+        lambda *_args: None,
     )
     monkeypatch.setattr(
         PreparedVisionInput,
