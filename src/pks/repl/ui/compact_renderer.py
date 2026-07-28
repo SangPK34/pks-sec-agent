@@ -61,6 +61,7 @@ from pks.output import (
     TaskUpdateEvent,
     TurnStartEvent,
     TurnSummaryEvent,
+    VisionCompleteEvent,
 )
 from pks.util.cli_palette import (
     PKS_GREEN,
@@ -375,6 +376,8 @@ class CompactCLIHandler:
             self._on_turn_start(event)
         elif isinstance(event, TurnSummaryEvent):
             self._on_turn_summary(event)
+        elif isinstance(event, VisionCompleteEvent):
+            self._on_vision_complete(event)
 
     def flush(self) -> None:
         self._dismiss_live()
@@ -489,6 +492,26 @@ class CompactCLIHandler:
         # model's markdown conclusion — task rows are ephemeral by design.
         self._dismiss_live()
         self._print_worked_note()
+
+    def _on_vision_complete(self, event: VisionCompleteEvent) -> None:
+        suffix = (
+            "Vision + OCR"
+            if event.mode == "vision_ocr"
+            else "OCR fallback"
+            if event.mode == "ocr_fallback"
+            else "Vision"
+        )
+        line = Text()
+        line.append("✦ ", style="bold #58F9FF")
+        line.append(
+            f"Đã soi {event.image_count} ảnh · {suffix}",
+            style="bold #58F9FF",
+        )
+        line.append(f" · {event.duration_seconds:.1f}s", style=GREY_HINT)
+        was_live = self._stop_live(release_ownership=False)
+        self._console.print(line)
+        if was_live:
+            self._start_live()
 
     def _print_thought_note(self) -> None:
         if self._thought_printed:

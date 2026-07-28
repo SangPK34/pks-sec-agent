@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 from PIL import Image
 
+from pks.output import VisionCompleteEvent
 from pks.sdk.agents import ModelSettings, ModelTracing, generation_span
 from pks.sdk.agents.models.openai_chatcompletions import OpenAIChatCompletionsModel
 from pks.util.vision import PreparedVisionInput
@@ -80,12 +81,17 @@ async def test_new_tool_image_is_attached_once_without_prompt_keywords(
     )
     _append_tool_image(model, image_path)
     calls: list[list[dict[str, Any]]] = []
+    events: list[Any] = []
 
     async def fake_direct(kwargs, *_args, **_kwargs):
         calls.append(kwargs["messages"])
         return SimpleNamespace()
 
     monkeypatch.setattr(model, "_direct_httpx_completion", fake_direct)
+    monkeypatch.setattr(
+        "pks.sdk.agents.models.openai_chatcompletions.OUTPUT.emit",
+        events.append,
+    )
     monkeypatch.setattr(
         PreparedVisionInput,
         "ocr_evidence",
@@ -98,6 +104,11 @@ async def test_new_tool_image_is_attached_once_without_prompt_keywords(
     assert _has_inline_image(calls[0])
     assert not _has_inline_image(calls[1])
     assert "base64," not in str(model.message_history)
+    vision_events = [event for event in events if isinstance(event, VisionCompleteEvent)]
+    assert len(vision_events) == 1
+    assert vision_events[0].image_count == 1
+    assert vision_events[0].mode == "vision_ocr"
+    assert model._pks_vision_status is None
 
 
 @pytest.mark.asyncio
@@ -113,6 +124,7 @@ async def test_tool_image_retries_with_ocr_when_provider_rejects_vision(
     )
     _append_tool_image(model, image_path)
     calls: list[list[dict[str, Any]]] = []
+    events: list[Any] = []
 
     async def fake_direct(kwargs, *_args, **_kwargs):
         calls.append(kwargs["messages"])
@@ -121,6 +133,10 @@ async def test_tool_image_retries_with_ocr_when_provider_rejects_vision(
         return SimpleNamespace()
 
     monkeypatch.setattr(model, "_direct_httpx_completion", fake_direct)
+    monkeypatch.setattr(
+        "pks.sdk.agents.models.openai_chatcompletions.OUTPUT.emit",
+        events.append,
+    )
     monkeypatch.setattr(
         PreparedVisionInput,
         "ocr_evidence",
@@ -134,3 +150,110 @@ async def test_tool_image_retries_with_ocr_when_provider_rejects_vision(
     assert calls[1][-1]["role"] == "user"
     assert calls[1][-1]["content"].endswith("OCR fallback evidence")
     assert model._pks_native_vision_disabled is True
+    vision_events = [event for event in events if isinstance(event, VisionCompleteEvent)]
+    assert len(vision_events) == 1
+    assert vision_events[0].mode == "ocr_fallback"
+    assert model._pks_vision_status is None
+
+
+@pytest.mark.asyncio
+async def test_explicit_inline_image_emits_native_vision_completion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = OpenAIChatCompletionsModel(
+        model="openai/CAI",
+        openai_client=SimpleNamespace(),
+        agent_name="vision-inline-status",
+    )
+    model.add_to_message_history(
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "describe this"},
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": "data:image/png;base64,AAAA",
+                        "detail": "auto",
+                    },
+                },
+            ],
+        }
+    )
+    events: list[Any] = []
+
+    async def fake_direct(*_args, **_kwargs):
+        return SimpleNamespace()
+
+    monkeypatch.setattr(model, "_direct_httpx_completion", fake_direct)
+    monkeypatch.setattr(
+        "pks.sdk.agents.models.openai_chatcompletions.OUTPUT.emit",
+        events.append,
+    )
+
+    await _fetch(model)
+
+    vision_events = [event for event in events if isinstance(event, VisionCompleteEvent)]
+    assert len(vision_events) == 1
+    assert vision_events[0].image_count == 1
+    assert vision_events[0].mode == "vision"
+
+
+@pytest.mark.asyncio
+async def test_vision_status_is_cleaned_when_request_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    image_path = tmp_path / "failed.png"
+    _write_png(image_path)
+    model = OpenAIChatCompletionsModel(
+        model="openai/CAI",
+        openai_client=SimpleNamespace(),
+        agent_name="vision-error-cleanup",
+    )
+    _append_tool_image(model, image_path)
+
+    async def fake_direct(*_args, **_kwargs):
+        raise RuntimeError("connection closed")
+
+    monkeypatch.setattr(model, "_direct_httpx_completion", fake_direct)
+    monkeypatch.setattr(
+        PreparedVisionInput,
+        "ocr_evidence",
+        lambda _self: "OCR assist evidence",
+    )
+
+    with pytest.raises(RuntimeError, match="connection closed"):
+        await _fetch(model)
+
+    assert model._pks_vision_status is None
+    from pks.util import wait_hints
+
+    assert f"vision:{id(model)}" not in wait_hints._activity_overlays
+
+
+def test_tui_vision_status_writes_start_and_completion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    writes: list[Any] = []
+    terminal = SimpleNamespace(write=writes.append)
+    model = OpenAIChatCompletionsModel(
+        model="openai/CAI",
+        openai_client=SimpleNamespace(),
+        agent_name="vision-tui-status",
+    )
+    monkeypatch.setenv("PKS_TUI_MODE", "true")
+    monkeypatch.setattr(
+        "pks.tui.core.terminal_console.get_terminal_output",
+        lambda: terminal,
+    )
+    monkeypatch.setattr(
+        "pks.sdk.agents.models.openai_chatcompletions.OUTPUT.emit",
+        lambda _event: None,
+    )
+
+    model._start_vision_status(2, "vision_ocr")
+    model._finish_vision_status()
+
+    rendered = [str(item) for item in writes]
+    assert any("Đang soi 2 ảnh" in item for item in rendered)
+    assert any("Đã soi 2 ảnh · Vision + OCR" in item for item in rendered)

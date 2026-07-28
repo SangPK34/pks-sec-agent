@@ -107,6 +107,15 @@ class StatusEvent(OutputEvent):
 
 
 @dataclass
+class VisionCompleteEvent(OutputEvent):
+    """Visual input preparation/inspection has completed."""
+
+    image_count: int = 0
+    mode: str = "vision"
+    duration_seconds: float = 0.0
+
+
+@dataclass
 class AgentHandoffEvent(OutputEvent):
     """Agent handoff occurred."""
 
@@ -297,6 +306,23 @@ class CLIOutputHandler:
                 f"[{level_style}]{event.message}[/{level_style}]"
                 if self._rich
                 else f"[{event.level.upper()}] {event.message}"
+            )
+        elif isinstance(event, VisionCompleteEvent):
+            suffix = (
+                "Vision + OCR"
+                if event.mode == "vision_ocr"
+                else "OCR fallback"
+                if event.mode == "ocr_fallback"
+                else "Vision"
+            )
+            message = (
+                f"✦ Đã soi {event.image_count} ảnh · {suffix} · "
+                f"{event.duration_seconds:.1f}s"
+            )
+            self._print(
+                f"[bold #58F9FF]{message}[/bold #58F9FF]"
+                if self._rich
+                else message
             )
         elif isinstance(event, AgentHandoffEvent):
             self._print(

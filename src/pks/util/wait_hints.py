@@ -94,6 +94,7 @@ _last_footer_ui_refresh = 0.0
 
 # Retry overlay while model stderr hint is active
 _retry_overlay_message: str | None = None
+_activity_overlays: dict[str, str] = {}
 _active_stderr_wait_loops = 0
 
 # Active wait-hint loops (for cooperative pause from interactive prompts).
@@ -338,8 +339,12 @@ def _tool_batch_label_and_summary(
 
 def _model_body(elapsed: float, state: dict[str, Any]) -> str:
     overlay = _retry_overlay_message
+    with _BODY_LOCK:
+        activity_overlay = next(reversed(_activity_overlays.values()), None)
     if overlay:
         action = overlay
+    elif activity_overlay:
+        action = activity_overlay
     elif state.get("phase") == "tool_result":
         agent_name = state.get("agent_name") or "Agent"
         action = f"{agent_name} đang phân tích kết quả tool…"
@@ -358,6 +363,17 @@ def _model_body(elapsed: float, state: dict[str, Any]) -> str:
         tokens = state.get("output_tokens")
         body += f"  •  ↓ {tokens if tokens is not None else '…'}"
     return body
+
+
+def set_model_activity_overlay(owner: str, message: str | None) -> None:
+    """Publish or clear an independently owned model-activity label."""
+    if not owner:
+        return
+    with _BODY_LOCK:
+        if message:
+            _activity_overlays[owner] = message
+        else:
+            _activity_overlays.pop(owner, None)
 
 
 def _tool_body(

@@ -156,10 +156,11 @@ from pks.errors import LLMEmptyAssistantError, LLMRateLimited, LLMTimeout
 from pks.util.wait_hints import (
     ModelStreamWaitHints,
     model_wait_hints,
+    set_model_activity_overlay,
     set_model_wait_retry_overlay,
     sleep_with_retry_backoff_hint,
 )
-from pks.output import OUTPUT, StatusEvent
+from pks.output import OUTPUT, StatusEvent, VisionCompleteEvent
 from pks.internal.components.metrics import process_intermediate_logs
 
 from .. import _debug
@@ -506,6 +507,7 @@ class OpenAIChatCompletionsModel(Model):
         self._pks_visual_history_cursor = len(self.message_history)
         self._pks_seen_visual_artifacts: set[str] = set()
         self._pks_native_vision_disabled = False
+        self._pks_vision_status: dict[str, Any] | None = None
 
         # Instance-based converter
         self._converter = _Converter()
@@ -563,9 +565,18 @@ class OpenAIChatCompletionsModel(Model):
         from pks.util.vision import find_local_image_paths, prepare_image_artifacts
 
         paths = []
+        inline_count = 0
         start = min(self._pks_visual_history_cursor, len(self.message_history))
         for message in self.message_history[start:]:
-            if not isinstance(message, dict) or self._pks_message_has_image(message):
+            if not isinstance(message, dict):
+                continue
+            if self._pks_message_has_image(message):
+                inline_count += sum(
+                    1
+                    for part in message.get("content", [])
+                    if isinstance(part, dict)
+                    and part.get("type") in {"input_image", "image_url"}
+                )
                 continue
             paths.extend(find_local_image_paths(self._pks_message_text(message)))
         paths.extend(find_local_image_paths(shared_context))
@@ -593,7 +604,95 @@ class OpenAIChatCompletionsModel(Model):
             + ". Inspect the pixels directly before deciding whether another "
             "image-analysis tool is needed.]"
         )
-        return prepare_image_artifacts(unseen, label), tuple(fingerprints)
+        return (
+            prepare_image_artifacts(unseen, label),
+            tuple(fingerprints),
+            inline_count,
+        )
+
+    def _start_vision_status(self, image_count: int, mode: str) -> None:
+        if image_count <= 0:
+            return
+        owner = f"vision:{id(self)}"
+        is_new = self._pks_vision_status is None
+        if self._pks_vision_status is None:
+            self._pks_vision_status = {
+                "owner": owner,
+                "image_count": image_count,
+                "mode": mode,
+                "started": time.monotonic(),
+            }
+        else:
+            self._pks_vision_status["image_count"] = image_count
+            self._pks_vision_status["mode"] = mode
+        noun = "image" if image_count == 1 else "images"
+        action = (
+            f"Reading {image_count} {noun} with OCR fallback…"
+            if mode == "ocr_fallback"
+            else f"Inspecting {image_count} {noun} with Vision…"
+        )
+        set_model_activity_overlay(
+            owner,
+            action,
+        )
+        if is_new and os.getenv("PKS_TUI_MODE", "").lower() == "true":
+            try:
+                from rich.text import Text
+                from pks.tui.core.terminal_console import get_terminal_output
+
+                terminal = get_terminal_output()
+                if terminal is not None:
+                    terminal.write(
+                        Text(
+                            f"◈ Đang soi {image_count} ảnh bằng Vision…",
+                            style="bold #58F9FF",
+                        )
+                    )
+            except Exception:
+                pass
+
+    def _finish_vision_status(self, *, completed: bool = True) -> None:
+        status = self._pks_vision_status
+        if status is None:
+            return
+        self._pks_vision_status = None
+        set_model_activity_overlay(str(status["owner"]), None)
+        if not completed:
+            return
+        event = VisionCompleteEvent(
+            agent_id=self.agent_name,
+            image_count=int(status["image_count"]),
+            mode=str(status["mode"]),
+            duration_seconds=max(
+                0.0,
+                time.monotonic() - float(status["started"]),
+            ),
+        )
+        OUTPUT.emit(event)
+        if os.getenv("PKS_TUI_MODE", "").lower() == "true":
+            try:
+                from rich.text import Text
+                from pks.tui.core.terminal_console import get_terminal_output
+
+                terminal = get_terminal_output()
+                if terminal is not None:
+                    suffix = (
+                        "Vision + OCR"
+                        if event.mode == "vision_ocr"
+                        else "OCR fallback"
+                        if event.mode == "ocr_fallback"
+                        else "Vision"
+                    )
+                    terminal.write(
+                        Text(
+                            f"✦ Đã soi {event.image_count} ảnh · "
+                            f"{suffix} · "
+                            f"{event.duration_seconds:.1f}s",
+                            style="bold #58F9FF",
+                        )
+                    )
+            except Exception:
+                pass
 
     def _messages_for_token_count_after_history_mutation(
         self,
@@ -1953,6 +2052,7 @@ class OpenAIChatCompletionsModel(Model):
                             continue
 
                         if _delta_has_model_progress(delta):
+                            self._finish_vision_status()
                             await stream_wait_hints.stop()
 
                         # Handle Claude reasoning content first (before regular content)
@@ -2726,6 +2826,7 @@ class OpenAIChatCompletionsModel(Model):
                     cache_read_input_tokens=cache_read,
                 )
 
+                self._finish_vision_status()
                 mark_latency("response_complete", once=True)
                 yield ResponseCompletedEvent(
                     response=final_response,
@@ -2914,6 +3015,7 @@ class OpenAIChatCompletionsModel(Model):
                     await stream_wait_hints.stop()
                 except Exception:
                     pass
+            self._finish_vision_status(completed=False)
             end_latency_trace(_latency_token)
 
             # Clean up streaming context
@@ -3082,14 +3184,23 @@ class OpenAIChatCompletionsModel(Model):
         except Exception:
             pass
 
-        auto_vision, auto_vision_fingerprints = self._prepare_new_visual_artifacts(
-            shared_context
-        )
+        (
+            auto_vision,
+            auto_vision_fingerprints,
+            inline_image_count,
+        ) = self._prepare_new_visual_artifacts(shared_context)
         auto_vision_is_native = auto_vision.has_images
         auto_ocr_evidence = ""
+        vision_image_count = inline_image_count + len(auto_vision.images)
+        if vision_image_count:
+            self._start_vision_status(
+                vision_image_count,
+                "vision_ocr" if auto_vision.has_images else "vision",
+            )
         if auto_vision.has_images:
             auto_ocr_evidence = await asyncio.to_thread(auto_vision.ocr_evidence)
             if self._pks_native_vision_disabled:
+                self._start_vision_status(vision_image_count, "ocr_fallback")
                 converted_messages.append(
                     {
                         "role": "user",
@@ -3408,12 +3519,15 @@ class OpenAIChatCompletionsModel(Model):
             )
         except Exception as exc:
             if not auto_vision_is_native:
+                self._finish_vision_status(completed=False)
                 raise
             from pks.util.vision import is_vision_rejection
 
             if not is_vision_rejection(exc):
+                self._finish_vision_status(completed=False)
                 raise
             self._pks_native_vision_disabled = True
+            self._start_vision_status(vision_image_count, "ocr_fallback")
             fallback_kwargs = dict(kwargs)
             fallback_kwargs["messages"] = converted_messages[:-1] + [
                 {
@@ -3423,16 +3537,22 @@ class OpenAIChatCompletionsModel(Model):
                     + auto_ocr_evidence,
                 }
             ]
-            response = await self._direct_httpx_completion(
-                fallback_kwargs,
-                model_settings,
-                tool_choice,
-                stream,
-                parallel_tool_calls,
-            )
+            try:
+                response = await self._direct_httpx_completion(
+                    fallback_kwargs,
+                    model_settings,
+                    tool_choice,
+                    stream,
+                    parallel_tool_calls,
+                )
+            except Exception:
+                self._finish_vision_status(completed=False)
+                raise
 
         self._pks_visual_history_cursor = len(self.message_history)
         self._pks_seen_visual_artifacts.update(auto_vision_fingerprints)
+        if not stream:
+            self._finish_vision_status()
         return response
 
     async def _direct_httpx_completion(

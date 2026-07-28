@@ -8,7 +8,7 @@ from rich.text import Text
 
 import pks.util.streaming as streaming
 import pks.util.wait_hints as wait_hints
-from pks.output import TaskRecord
+from pks.output import TaskRecord, VisionCompleteEvent
 from pks.repl.ui.compact_renderer import CompactCLIHandler, _row_for_record
 from pks.util.hint_renderables import build_model_wait_hint_renderable
 
@@ -42,6 +42,30 @@ def test_clear_wait_hints_removes_published_body():
     wait_hints.clear_wait_hints()
 
     assert wait_hints.get_current_wait_hint_body() is None
+
+
+def test_vision_activity_overlay_and_completion_row() -> None:
+    wait_hints.set_model_activity_overlay("vision-test", "Inspecting 1 image with Vision…")
+    try:
+        assert "Inspecting 1 image with Vision…" in wait_hints._model_body(0.0, {})
+    finally:
+        wait_hints.set_model_activity_overlay("vision-test", None)
+
+    output = StringIO()
+    handler = CompactCLIHandler(
+        Console(file=output, force_terminal=False, width=100)
+    )
+    handler.handle(
+        VisionCompleteEvent(
+            image_count=1,
+            mode="vision_ocr",
+            duration_seconds=1.25,
+        )
+    )
+
+    rendered = output.getvalue()
+    assert "Đã soi 1 ảnh" in rendered
+    assert "Vision + OCR" in rendered
 
 
 @pytest.mark.asyncio
