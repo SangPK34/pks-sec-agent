@@ -1,10 +1,12 @@
 import json
+from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from PIL import Image
+from rich.console import Console
 
 from pks.output import VisionCompleteEvent
 from pks.sdk.agents import ModelSettings, ModelTracing, generation_span
@@ -334,10 +336,15 @@ def test_tui_vision_status_only_persists_completion(
     )
     model._finish_vision_status()
 
-    rendered = [str(item) for item in writes]
+    assert len(writes) == 1
+    output = StringIO()
+    Console(file=output, force_terminal=False).print(writes[0])
+    rendered = output.getvalue().splitlines()
     assert not any("Đang soi 2 ảnh" in item for item in rendered)
-    assert len(rendered) == 4
-    assert "• Viewed Image" in rendered[0]
+    assert len(rendered) == 6
+    assert rendered[0] == "• Viewed Image"
     assert "/tmp/first.png" in rendered[1]
-    assert "• Viewed Image" in rendered[2]
-    assert "/tmp/second.png" in rendered[3]
+    assert rendered[2] == ""
+    assert rendered[3] == "• Viewed Image"
+    assert "/tmp/second.png" in rendered[4]
+    assert rendered[5] == ""

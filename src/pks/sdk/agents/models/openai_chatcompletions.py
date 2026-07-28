@@ -680,6 +680,7 @@ class OpenAIChatCompletionsModel(Model):
         OUTPUT.emit(event)
         if os.getenv("PKS_TUI_MODE", "").lower() == "true":
             try:
+                from rich.console import Group
                 from rich.text import Text
                 from pks.tui.core.terminal_console import get_terminal_output
 
@@ -689,8 +690,9 @@ class OpenAIChatCompletionsModel(Model):
                     paths = event.image_paths or tuple(
                         "attached image" for _ in range(event.image_count)
                     )
-                    for path in paths:
-                        terminal.write(
+                    lines = []
+                    for index, path in enumerate(paths):
+                        lines.append(
                             Text("• Viewed Image", style="bold #58F9FF")
                         )
                         detail = Text("  └ ", style="dim")
@@ -707,7 +709,11 @@ class OpenAIChatCompletionsModel(Model):
                                 detail.append(display, style=f"link {target}")
                             except (OSError, ValueError):
                                 detail.append(path)
-                        terminal.write(detail)
+                        lines.append(detail)
+                        if index < len(paths) - 1:
+                            lines.append(Text())
+                    lines.append(Text())
+                    terminal.write(Group(*lines))
             except Exception:
                 pass
 

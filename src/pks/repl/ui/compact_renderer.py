@@ -500,7 +500,7 @@ class CompactCLIHandler:
         paths = event.image_paths or tuple(
             "attached image" for _ in range(event.image_count)
         )
-        for path in paths:
+        for index, path in enumerate(paths):
             lines.append(Text("• Viewed Image", style="bold #58F9FF"))
             detail = Text("  └ ", style=GREY_HINT)
             if not has_paths:
@@ -517,9 +517,11 @@ class CompactCLIHandler:
                 except (OSError, ValueError):
                     detail.append(path)
             lines.append(detail)
+            if index < len(paths) - 1:
+                lines.append(Text())
+        lines.append(Text())
         self._stop_live(release_ownership=False)
-        for line in lines:
-            self._console.print(line)
+        self._console.print(Group(*lines))
 
     def _print_thought_note(self) -> None:
         if self._thought_printed:

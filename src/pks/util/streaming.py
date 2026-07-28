@@ -19,6 +19,7 @@ import sys
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from datetime import datetime
 from typing import Any, Dict, Optional
 
@@ -65,6 +66,18 @@ def _compact_suppresses_verbose() -> bool:
     from pks.repl.ui.compact_wiring import is_compact_enabled
 
     return is_compact_enabled()
+
+
+@contextmanager
+def _exclusive_tool_render():
+    """Temporarily stop model wait hints while a tool block owns the terminal."""
+    from pks.util.wait_hints import pause_all_wait_hints, resume_all_wait_hints
+
+    pause_all_wait_hints()
+    try:
+        yield
+    finally:
+        resume_all_wait_hints()
 
 
 _LIVE_STREAMING_PANELS = {}
@@ -1038,26 +1051,27 @@ def _finalize_tool_group(group_id):
             else contents_to_show[0]
         )
 
-        used_live_for_final = False
-        if live_panel:
-            try:
-                live_panel.update(merged_final)
-                # PERF: immediate final paint instead of a 100ms blocking sleep.
-                live_panel.refresh()
-                live_panel.stop()
-                used_live_for_final = True
-            except Exception:
-                pass
+        with _exclusive_tool_render():
+            used_live_for_final = False
+            if live_panel:
+                try:
+                    live_panel.update(merged_final)
+                    # PERF: immediate final paint instead of a 100ms blocking sleep.
+                    live_panel.refresh()
+                    live_panel.stop()
+                    used_live_for_final = True
+                except Exception:
+                    pass
 
-        _console = Console()
+            _console = Console()
 
-        # Erase sticky footer before printing new tool content
-        _erase_usage_footer()
+            # Erase sticky footer before printing new tool content
+            _erase_usage_footer()
 
-        # If Live already left the final render on screen, do not print again.
-        if not used_live_for_final:
-            for i, _c in enumerate(contents_to_show):
-                _console.print(_c)
+            # If Live already left the final render on screen, do not print again.
+            if not used_live_for_final:
+                for _c in contents_to_show:
+                    _console.print(_c)
                 if i < len(contents_to_show) - 1:
                     _console.print()
         _print_cli_gap_after_completed_tool(False, None, f"group:{group_id}")
@@ -3724,9 +3738,10 @@ def cli_print_tool_output(
                     print("[DEBUG_TOOLS_VIZ] cli_print_tool_output() SKIP: render guard duplicate")
                 return
 
-        # Print the flat content (header + indented output + token info)
-        console.print(content)
-        _print_cli_gap_after_completed_tool(streaming, execution_info, call_id)
+        # Print atomically while any continuation wait hint yields the terminal.
+        with _exclusive_tool_render():
+            console.print(content)
+            _print_cli_gap_after_completed_tool(streaming, execution_info, call_id)
 
         # No footer here — only agent messages print the footer to keep
         # the output clean between tools.
@@ -3736,8 +3751,9 @@ def cli_print_tool_output(
             cli_print_tool_output._command_display_times[command_key] = time.time()
 
     except (ImportError, Exception):
-        _print_simple_tool_output(tool_name, args, output, execution_info, token_info)
-        _print_cli_gap_after_completed_tool(streaming, execution_info, call_id)
+        with _exclusive_tool_render():
+            _print_simple_tool_output(tool_name, args, output, execution_info, token_info)
+            _print_cli_gap_after_completed_tool(streaming, execution_info, call_id)
         if not streaming and command_key:
             cli_print_tool_output._command_display_times[command_key] = time.time()
 

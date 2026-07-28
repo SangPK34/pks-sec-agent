@@ -93,13 +93,40 @@ def test_vision_completion_renders_each_image_and_does_not_restart_live(
     )
 
     lines = output.getvalue().splitlines()
-    assert len(lines) == 6
+    assert len(lines) == 9
     assert lines[0] == "• Viewed Image"
     assert "/tmp/a.png" in lines[1]
-    assert lines[2] == "• Viewed Image"
-    assert "/tmp/b.png" in lines[3]
-    assert lines[4] == "• Viewed Image"
-    assert "/tmp/c.png" in lines[5]
+    assert lines[2] == ""
+    assert lines[3] == "• Viewed Image"
+    assert "/tmp/b.png" in lines[4]
+    assert lines[5] == ""
+    assert lines[6] == "• Viewed Image"
+    assert "/tmp/c.png" in lines[7]
+    assert lines[8] == ""
+
+
+def test_vision_completion_prints_all_rows_atomically(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handler = CompactCLIHandler(
+        Console(file=StringIO(), force_terminal=False, width=100)
+    )
+    rendered = []
+    monkeypatch.setattr(handler, "_stop_live", lambda **_kwargs: False)
+    monkeypatch.setattr(
+        handler._console,
+        "print",
+        lambda renderable: rendered.append(renderable),
+    )
+
+    handler.handle(
+        VisionCompleteEvent(
+            image_count=2,
+            image_paths=("/tmp/a.png", "/tmp/b.png"),
+        )
+    )
+
+    assert len(rendered) == 1
 
 
 @pytest.mark.asyncio

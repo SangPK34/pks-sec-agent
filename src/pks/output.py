@@ -310,13 +310,15 @@ class CLIOutputHandler:
             )
         elif isinstance(event, VisionCompleteEvent):
             if self._rich and self._console:
+                from rich.console import Group
                 from rich.text import Text
 
                 has_paths = bool(event.image_paths)
                 paths = event.image_paths or tuple(
                     "attached image" for _ in range(event.image_count)
                 )
-                for path in paths:
+                lines = []
+                for index, path in enumerate(paths):
                     title = Text("• Viewed Image", style="bold #58F9FF")
                     detail = Text("  └ ", style="dim")
                     if not has_paths:
@@ -332,15 +334,21 @@ class CLIOutputHandler:
                             detail.append(display, style=f"link {target}")
                         except (OSError, ValueError):
                             detail.append(path)
-                    self._console.print(title, highlight=False)
-                    self._console.print(detail, highlight=False)
+                    lines.extend((title, detail))
+                    if index < len(paths) - 1:
+                        lines.append(Text())
+                lines.append(Text())
+                self._console.print(Group(*lines), highlight=False)
             else:
                 paths = event.image_paths or tuple(
                     "attached image" for _ in range(event.image_count)
                 )
-                for path in paths:
+                for index, path in enumerate(paths):
                     self._print("• Viewed Image")
                     self._print(f"  └ {path}")
+                    if index < len(paths) - 1:
+                        self._print("")
+                self._print("")
         elif isinstance(event, AgentHandoffEvent):
             self._print(
                 f"[bold magenta]>> Handoff: {event.from_agent} -> {event.to_agent}[/bold magenta]"
