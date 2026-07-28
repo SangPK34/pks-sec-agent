@@ -93,7 +93,7 @@ THINKING_TOOL_NAME = "__thinking__"
 # on a separate ``↳`` sub-row anyway.
 _BARE_ORCH_TOOL_NAMES = frozenset({"run_specialist", "run_parallel_specialists"})
 
-_REFRESH_PER_SEC = 8
+_REFRESH_PER_SEC = 12
 _REFRESH_PER_SEC_IDLE = 2
 _MAX_VISIBLE_TASK_ROWS = 14
 _HANDOFF_TTL_S = 4.0
@@ -639,11 +639,14 @@ class CompactCLIHandler:
         turn_records = sorted(TASK_REGISTRY.for_turn() or [], key=lambda r: r.started_at)
         visible_records, hidden_count = _visible_task_records(turn_records)
         running_count = sum(1 for r in turn_records if r.status == "running")
+        wait_row = _wait_hint_row(tick=tick)
 
         if self._live is not None:
             try:
                 self._live.refresh_per_second = (
-                    _REFRESH_PER_SEC if running_count else _REFRESH_PER_SEC_IDLE
+                    _REFRESH_PER_SEC
+                    if running_count or wait_row is not None
+                    else _REFRESH_PER_SEC_IDLE
                 )
             except Exception:
                 pass
@@ -657,7 +660,6 @@ class CompactCLIHandler:
         for _from_agent, to_agent, _ttl in handoffs_snapshot:
             rows.append(_handoff_subline(to_agent))
 
-        wait_row = _wait_hint_row(tick=tick)
         if wait_row is not None:
             rows.append(wait_row)
 

@@ -187,10 +187,24 @@ def test_model_wait_renderable_matches_command_code_chrome():
         "Architecting…  Ctrl+C to interrupt  •  1s"
     )
 
-    assert "✣" in rendered.plain
+    assert rendered.plain.startswith("✶ ")
     assert "Architecting…" in rendered.plain
     assert "Ctrl+C to interrupt" in rendered.plain
     assert "↓ 0" in rendered.plain
+
+
+def test_model_wait_renderable_animates_icon_and_badge():
+    first = build_model_wait_hint_renderable(
+        "Architecting…  Ctrl+C to interrupt  •  1s",
+        frame_tick=0,
+    )
+    second = build_model_wait_hint_renderable(
+        "Architecting…  Ctrl+C to interrupt  •  1s",
+        frame_tick=1,
+    )
+
+    assert first.plain != second.plain
+    assert first.spans != second.spans
 
 
 def test_compact_handler_prints_thought_and_worked_notes(monkeypatch):

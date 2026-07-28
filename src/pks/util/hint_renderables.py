@@ -22,9 +22,12 @@ PKS_BADGE_FG = "#0a0a0c"
 _PIPE_FRAMES = ("|", "/", "—", "\\")
 # Same frames as ``rich.status.Status(..., spinner="dots")`` (startup / license check).
 _BRAILLE_DOTS_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
-STARTUP_HINT_SPINNER_HZ = 8
+_ACTIVITY_ICON_FRAMES = ("✶", "✸", "✹", "✺", "✹", "✷")
+STARTUP_HINT_SPINNER_HZ = 12
 ACTIVITY_BG = "#392d63"
 ACTIVITY_FG = "#c5adff"
+ACTIVITY_HIGHLIGHT = "#f4efff"
+ACTIVITY_DIM = "#9d83e6"
 
 
 def terminal_columns() -> int:
@@ -71,6 +74,22 @@ def braille_dots_frame(tick: int) -> str:
     return _BRAILLE_DOTS_FRAMES[tick % len(_BRAILLE_DOTS_FRAMES)]
 
 
+def _append_activity_badge(line: Text, action: str, frame_tick: int) -> None:
+    """Append a purple activity badge with a moving three-character highlight."""
+    line.append(" ", style=f"bold {ACTIVITY_DIM} on {ACTIVITY_BG}")
+    sweep = frame_tick % (len(action) + 6) - 3
+    for index, char in enumerate(action):
+        distance = abs(index - sweep)
+        if distance == 0:
+            foreground = ACTIVITY_HIGHLIGHT
+        elif distance <= 2:
+            foreground = ACTIVITY_FG
+        else:
+            foreground = ACTIVITY_DIM
+        line.append(char, style=f"bold {foreground} on {ACTIVITY_BG}")
+    line.append(" ", style=f"bold {ACTIVITY_DIM} on {ACTIVITY_BG}")
+
+
 def build_startup_hint_renderable(message: str) -> RenderableType:
     """Startup line: badge + static `` | `` + dim italic message (no interrupt suffix)."""
     msg = _truncate_body(message, max(20, terminal_columns() - 24))
@@ -82,18 +101,21 @@ def build_startup_hint_renderable(message: str) -> RenderableType:
 
 
 def build_compact_live_wait_hint_row(body: str, *, frame_tick: int) -> Text:
-    """Wait row inside the compact Live block — matches startup chrome + braille spinner.
+    """Wait row inside the compact Live block with a locally animated activity badge.
 
-    ``StartupHints`` paints the spinner via ``Status`` on stderr; here we advance the
-    same braille frames manually so the compact ``Live`` can own the only cursor.
+    The compact ``Live`` owns the cursor, so both the star and badge shimmer are
+    advanced manually instead of spawning a second Rich ``Status``.
     """
     msg = _truncate_body(body, max(20, terminal_columns() - 12))
     line = Text()
-    line.append(braille_dots_frame(frame_tick), style=f"bold {ACTIVITY_FG}")
+    line.append(
+        _ACTIVITY_ICON_FRAMES[frame_tick % len(_ACTIVITY_ICON_FRAMES)],
+        style=f"bold {ACTIVITY_FG}",
+    )
     line.append(" ", style="")
     if "  Ctrl+C to interrupt  •  " in msg:
         action, suffix = msg.split("  Ctrl+C to interrupt  •  ", 1)
-        line.append(f" {action} ", style=f"bold {ACTIVITY_FG} on {ACTIVITY_BG}")
+        _append_activity_badge(line, action, frame_tick)
         line.append("  Ctrl+C to interrupt  •  ", style="dim")
         line.append(f"{suffix} • ↓ 0", style="dim")
         return line
@@ -103,14 +125,24 @@ def build_compact_live_wait_hint_row(body: str, *, frame_tick: int) -> Text:
     return line
 
 
-def build_model_wait_hint_renderable(body: str) -> RenderableType:
-    """Minimal Command Code-style model activity row."""
+def build_model_wait_hint_renderable(
+    body: str,
+    *,
+    frame_tick: int = 0,
+    include_icon: bool = True,
+) -> RenderableType:
+    """Command Code-style model activity row with an animated badge sweep."""
     msg = _truncate_body(body, max(20, terminal_columns() - 8))
     line = Text()
     if "  Ctrl+C to interrupt  •  " in msg:
         action, suffix = msg.split("  Ctrl+C to interrupt  •  ", 1)
-        line.append("✣ ", style=f"bold {ACTIVITY_FG}")
-        line.append(f" {action} ", style=f"bold {ACTIVITY_FG} on {ACTIVITY_BG}")
+        if include_icon:
+            line.append(
+                _ACTIVITY_ICON_FRAMES[frame_tick % len(_ACTIVITY_ICON_FRAMES)],
+                style=f"bold {ACTIVITY_FG}",
+            )
+            line.append(" ")
+        _append_activity_badge(line, action, frame_tick)
         line.append("  Ctrl+C to interrupt  •  ", style="dim")
         line.append(f"{suffix} • ↓ 0", style="dim")
     else:

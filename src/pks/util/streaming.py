@@ -4208,12 +4208,13 @@ def create_claude_thinking_context(agent_name, counter, model):
         if not is_compact_enabled() and wait_hints_enabled():
             status = Status(
                 build_model_wait_hint_renderable(
-                    "Thinking…  Ctrl+C to interrupt  •  0s  •  1 line"
+                    "Thinking…  Ctrl+C to interrupt  •  0s  •  1 line",
+                    include_icon=False,
                 ),
                 console=Console(stderr=True, soft_wrap=False),
-                spinner="dots",
+                spinner="star",
                 spinner_style="bold #9d7cff",
-                refresh_per_second=8,
+                refresh_per_second=12,
             )
             status.start()
             context["status"] = status
@@ -4254,7 +4255,9 @@ def update_claude_thinking_content(context, thinking_delta):
             status.update(
                 build_model_wait_hint_renderable(
                     f"Thinking…  Ctrl+C to interrupt  •  {elapsed}s  •  "
-                    f"{lines} {'line' if lines == 1 else 'lines'}"
+                    f"{lines} {'line' if lines == 1 else 'lines'}",
+                    frame_tick=context["char_count"],
+                    include_icon=False,
                 )
             )
         except Exception:

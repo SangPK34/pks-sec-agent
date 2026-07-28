@@ -83,6 +83,7 @@ RETRY_TRAILER = (
 )
 
 _PIPE_SPIN_INTERVAL = 0.25
+_MODEL_SPIN_INTERVAL = 1 / 12
 
 # Tool waits: Rich renderable in the compact status footer (stdout/Live).
 _TOOL_FOOTER_LOCK = threading.Lock()
@@ -470,14 +471,15 @@ class _WaitHintLoop:
                 # false but we must not paint a second Live on stderr.
                 if not (_compact_live_owner or _compact_cli_owns_wait_hints()):
                     initial = build_model_wait_hint_renderable(
-                        _model_body(0.0, self._state)
+                        _model_body(0.0, self._state),
+                        include_icon=False,
                     )
                     self._status = Status(
                         initial,
                         console=self._console,
-                        spinner="dots",
+                        spinner="star",
                         spinner_style="bold #9d7cff",
-                        refresh_per_second=8,
+                        refresh_per_second=12,
                     )
                     self._status.start()
                 else:
@@ -513,7 +515,11 @@ class _WaitHintLoop:
                         _set_model_wait_body(body)
                         if not self._externally_paused and self._status is not None:
                             self._status.update(
-                                build_model_wait_hint_renderable(body)
+                                build_model_wait_hint_renderable(
+                                    body,
+                                    frame_tick=tick,
+                                    include_icon=False,
+                                )
                             )
                     else:
                         body = _tool_body(
@@ -531,7 +537,12 @@ class _WaitHintLoop:
                     tick += 1
                     try:
                         await asyncio.wait_for(
-                            self._stopped.wait(), timeout=_PIPE_SPIN_INTERVAL
+                            self._stopped.wait(),
+                            timeout=(
+                                _MODEL_SPIN_INTERVAL
+                                if self._mode == "model"
+                                else _PIPE_SPIN_INTERVAL
+                            ),
                         )
                         break
                     except asyncio.TimeoutError:
@@ -637,14 +648,15 @@ class _WaitHintLoop:
         if self._mode == "model" and self._console is not None:
             try:
                 initial = build_model_wait_hint_renderable(
-                    _model_body(0.0, self._state)
+                    _model_body(0.0, self._state),
+                    include_icon=False,
                 )
                 self._status = Status(
                     initial,
                     console=self._console,
-                    spinner="dots",
+                    spinner="star",
                     spinner_style="bold #9d7cff",
-                    refresh_per_second=8,
+                    refresh_per_second=12,
                 )
                 self._status.start()
             except Exception:
