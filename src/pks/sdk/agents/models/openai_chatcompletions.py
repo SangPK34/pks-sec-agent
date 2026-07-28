@@ -275,6 +275,25 @@ def _delta_has_model_progress(delta: Any) -> bool:
     return False
 
 
+def _stream_display_parts(content: str, max_parts: int = 24) -> list[str]:
+    """Split visible text into word-sized frames without changing its bytes."""
+    parts = re.findall(r"\s+|\S+\s*", content)
+    if len(parts) <= max_parts:
+        return parts
+    group_size = (len(parts) + max_parts - 1) // max_parts
+    return [
+        "".join(parts[index : index + group_size])
+        for index in range(0, len(parts), group_size)
+    ]
+
+
+def _stream_display_delay(part_count: int) -> float:
+    """Target 60 FPS while adding at most 120 ms per provider delta."""
+    if part_count <= 1:
+        return 0.0
+    return min(1.0 / 60.0, 0.12 / (part_count - 1))
+
+
 def _input_has_tool_result(
     input: str | list[TResponseInputItem],
     message_history: list[dict[str, Any]],
@@ -1955,9 +1974,19 @@ class OpenAIChatCompletionsModel(Model):
                                     streaming_context = None
 
                             if streaming_context:
-                                update_agent_streaming_content(
-                                    streaming_context, content, None
-                                )
+                                display_parts = _stream_display_parts(content)
+                                display_delay = _stream_display_delay(len(display_parts))
+                                for part_index, display_part in enumerate(display_parts):
+                                    update_agent_streaming_content(
+                                        streaming_context,
+                                        display_part,
+                                        None,
+                                    )
+                                    if (
+                                        display_delay
+                                        and part_index + 1 < len(display_parts)
+                                    ):
+                                        await asyncio.sleep(display_delay)
 
                             # Skip accurate token counting during the stream.
                             output_text += content

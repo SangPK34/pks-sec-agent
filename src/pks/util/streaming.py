@@ -2155,7 +2155,7 @@ def update_agent_streaming_content(context, text_delta, token_stats=None):
                     _LiveCls = _get_pks_agent_live_class()
                     context["live"] = _LiveCls(
                         updated_content,
-                        refresh_per_second=20,
+                        refresh_per_second=60,
                         console=console,
                         auto_refresh=True,
                         vertical_overflow="visible",

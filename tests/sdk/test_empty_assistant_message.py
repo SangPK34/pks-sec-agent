@@ -20,6 +20,8 @@ from pks.sdk.agents.models.openai_chatcompletions import (
     _is_effectively_empty_assistant_message,
     _is_effectively_empty_stream_accumulation,
     _should_force_compact_on_empty_streak,
+    _stream_display_delay,
+    _stream_display_parts,
 )
 
 
@@ -85,6 +87,24 @@ def test_role_only_stream_delta_is_not_model_progress():
     assert _delta_has_model_progress({"reasoning_content": "private reasoning"}) is False
     assert _delta_has_model_progress({"content": "ok"}) is True
     assert _delta_has_model_progress({"tool_calls": [{"id": "call_1"}]}) is True
+
+
+def test_stream_display_parts_preserve_text_and_split_words():
+    content = "Xin chào Cục Than, ngon rồi!"
+    parts = _stream_display_parts(content)
+
+    assert parts == ["Xin ", "chào ", "Cục ", "Than, ", "ngon ", "rồi!"]
+    assert "".join(parts) == content
+    assert _stream_display_delay(len(parts)) == pytest.approx(1.0 / 60.0)
+
+
+def test_stream_display_pacing_is_bounded_for_large_provider_chunk():
+    content = " ".join(f"word-{index}" for index in range(100))
+    parts = _stream_display_parts(content)
+
+    assert len(parts) <= 24
+    assert "".join(parts) == content
+    assert _stream_display_delay(len(parts)) * (len(parts) - 1) <= 0.120001
 
 
 def test_stream_accumulation_not_empty_with_tool_calls():
