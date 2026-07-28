@@ -90,10 +90,10 @@ from pks.util import (
     cli_print_agent_messages,
     cli_print_tool_output,
     create_agent_streaming_context,
+    create_claude_thinking_context,
     finish_agent_streaming,
     normalize_token_info,
     start_active_timer,
-    start_claude_thinking_if_applicable,
     start_idle_timer,
     stop_active_timer,
     stop_idle_timer,
@@ -147,6 +147,11 @@ from .chatcompletions.model import (
 from pks.config import get_config
 from pks.model_catalog import api_model_id
 from pks.util.llm_api_base import resolve_openai_api_key, resolve_openai_base_url
+from pks.util.latency_trace import (
+    begin_latency_trace,
+    end_latency_trace,
+    mark_latency,
+)
 from pks.errors import LLMEmptyAssistantError, LLMRateLimited, LLMTimeout
 from pks.util.wait_hints import (
     ModelStreamWaitHints,
@@ -255,20 +260,41 @@ def _value_has_stream_signal(value: Any) -> bool:
     if value is None:
         return False
     if isinstance(value, str):
-        return bool(value)
+        return bool(value.strip())
     return bool(value)
 
 
 def _delta_has_model_progress(delta: Any) -> bool:
-    """True when a streamed delta carries visible text, reasoning, or tool data."""
+    """True when a streamed delta carries visible text or tool-call data."""
     if not delta:
         return False
-    for key in ("content", "reasoning_content", "thinking", "tool_calls", "function_call"):
+    for key in ("content", "tool_calls", "function_call"):
         value = delta.get(key) if isinstance(delta, dict) else getattr(delta, key, None)
         if _value_has_stream_signal(value):
             return True
-    blocks = delta.get("thinking_blocks") if isinstance(delta, dict) else getattr(delta, "thinking_blocks", None)
-    return bool(blocks)
+    return False
+
+
+def _input_has_tool_result(
+    input: str | list[TResponseInputItem],
+    message_history: list[dict[str, Any]],
+) -> bool:
+    if (
+        message_history
+        and isinstance(message_history[-1], dict)
+        and message_history[-1].get("role") == "tool"
+    ):
+        return True
+    if isinstance(input, str):
+        return False
+    for item in reversed(input):
+        if not isinstance(item, dict):
+            continue
+        if item.get("role") == "tool":
+            return True
+        if item.get("type") in {"function_call_output", "computer_call_output"}:
+            return True
+    return False
 
 
 def _is_effectively_empty_assistant_message(message: Any) -> bool:
@@ -529,6 +555,12 @@ class OpenAIChatCompletionsModel(Model):
     async def _retry_with_backoff(self, attempt: int, kind: str) -> None:
         """Wait with exponential backoff. Console noise only if PKS_VERBOSE_LLM_RETRY is set."""
         delay = self._backoff_delay(attempt)
+        mark_latency(
+            "retry_backoff_start",
+            kind=kind,
+            attempt=attempt + 1,
+            delay=delay,
+        )
         msg = f"{kind} (attempt {attempt + 1}/3) — retrying in {delay:.0f}s..."
         self.logger.warning(f"LLM backoff: {msg}")
         if verbose_http_retries():
@@ -540,6 +572,12 @@ class OpenAIChatCompletionsModel(Model):
             console.print("[green]↻ Retrying now...[/green]\n")
         else:
             await sleep_with_retry_backoff_hint(delay)
+        mark_latency(
+            "retry_backoff_complete",
+            kind=kind,
+            attempt=attempt + 1,
+            delay=delay,
+        )
 
     async def _recover_after_empty_completion(
         self,
@@ -1478,6 +1516,15 @@ class OpenAIChatCompletionsModel(Model):
         thinking_context = None
         stream_interrupted = False
         stream_wait_hints: ModelStreamWaitHints | None = None
+        wait_phase = (
+            "tool_result"
+            if _input_has_tool_result(input, self.message_history)
+            else "initial"
+        )
+        _latency_trace, _latency_token = begin_latency_trace(
+            self.agent_name,
+            wait_phase,
+        )
 
         try:
             # IMPORTANT: Pre-process input to ensure it's in the correct format
@@ -1542,14 +1589,10 @@ class OpenAIChatCompletionsModel(Model):
                 # Prepare messages for consistent token counting
                 # IMPORTANT: Include existing message history for context (matching get_response pattern)
                 converted_messages = self._shallow_copy_history_messages()
-                wait_phase = (
-                    "tool_result"
-                    if self.message_history
-                    and isinstance(self.message_history[-1], dict)
-                    and self.message_history[-1].get("role") == "tool"
-                    else ""
+                stream_wait_hints = ModelStreamWaitHints(
+                    model_phase=wait_phase,
+                    agent_name=self.agent_name,
                 )
-                stream_wait_hints = ModelStreamWaitHints(model_phase=wait_phase)
                 await stream_wait_hints.start()
 
                 # Then convert and add the new input
@@ -1634,6 +1677,7 @@ class OpenAIChatCompletionsModel(Model):
                         tracing,
                         stream=True,
                     )
+                    mark_latency("provider_stream_open", once=True)
                     set_model_wait_retry_overlay(None)
                 except KeyboardInterrupt:
                     await stream_wait_hints.stop()
@@ -1718,12 +1762,6 @@ class OpenAIChatCompletionsModel(Model):
                 # For tool call streaming, accumulate tool_calls to add to message_history at the end
                 streamed_tool_calls = []
 
-                # Initialize Claude thinking display if applicable
-                if should_show_rich_stream:  # Only show thinking in rich streaming mode
-                    thinking_context = start_claude_thinking_if_applicable(
-                        str(self.model), self.agent_name, self.interaction_counter
-                    )
-
                 # Ollama specific: accumulate full content to check for function calls at the end
                 # Some Ollama models output the function call as JSON in the text content
                 ollama_full_content = ""
@@ -1747,6 +1785,7 @@ class OpenAIChatCompletionsModel(Model):
 
                 try:
                     async for chunk in stream:
+                        mark_latency("first_provider_event", once=True)
                         # Check if we've been interrupted
                         if stream_interrupted:
                             break
@@ -1867,6 +1906,9 @@ class OpenAIChatCompletionsModel(Model):
                                 from pks.util import update_claude_thinking_content
 
                                 update_claude_thinking_content(thinking_context, reasoning_content)
+                                # The local thinking row now owns the animation.
+                                # Keep raw reasoning hidden; only its counters update.
+                                await stream_wait_hints.stop()
 
                         # Handle text
                         content = None
@@ -1880,6 +1922,7 @@ class OpenAIChatCompletionsModel(Model):
                             content = delta["content"]
 
                         if content:
+                            mark_latency("first_text_delta", once=True)
                             # IMPORTANT: If we have content and thinking_context is active,
                             # it means thinking is complete and normal content is starting
                             # Close the thinking display automatically
@@ -2557,6 +2600,7 @@ class OpenAIChatCompletionsModel(Model):
                     cache_read_input_tokens=cache_read,
                 )
 
+                mark_latency("response_complete", once=True)
                 yield ResponseCompletedEvent(
                     response=final_response,
                     sequence_number=next_sequence_number(),
@@ -2744,6 +2788,7 @@ class OpenAIChatCompletionsModel(Model):
                     await stream_wait_hints.stop()
                 except Exception:
                     pass
+            end_latency_trace(_latency_token)
 
             # Clean up streaming context
             if streaming_context:

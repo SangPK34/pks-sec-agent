@@ -1,3 +1,4 @@
+import asyncio
 from io import StringIO
 from types import SimpleNamespace
 
@@ -177,7 +178,85 @@ def test_set_model_wait_retry_overlay_overrides_model_body():
 
 
 def test_model_wait_body_after_tool_output_uses_tool_phase():
-    body = wait_hints._model_body(0.0, {"phase": "tool_result"})
+    body = wait_hints._model_body(
+        0.0,
+        {"phase": "tool_result", "agent_name": "CTF agent"},
+    )
 
-    assert body.startswith("Reading tool output…")
+    assert body.startswith("CTF agent đang phân tích kết quả tool…")
+    assert body.endswith("0.0s")
     assert "Ctrl+C to interrupt" in body
+
+
+@pytest.mark.asyncio
+async def test_model_wait_spinner_runs_without_provider_events_and_cleans_up(monkeypatch):
+    monkeypatch.setattr(wait_hints, "wait_hints_enabled", lambda: True)
+    monkeypatch.setattr(wait_hints, "_compact_cli_owns_wait_hints", lambda: True)
+    wait_hints.clear_wait_hints()
+
+    hint = wait_hints.ModelStreamWaitHints(
+        model_phase="tool_result",
+        agent_name="CTF agent",
+    )
+    try:
+        await hint.start()
+        await asyncio.sleep(0.3)
+
+        body = wait_hints.get_current_wait_hint_body()
+        assert body is not None
+        assert "CTF agent đang phân tích kết quả tool…" in body
+        assert "0.3s" in body
+    finally:
+        await hint.stop()
+        wait_hints.clear_wait_hints()
+
+    assert wait_hints._current_model_body is None
+    assert not any(
+        task.get_name() == "pks_wait_hints" and not task.done()
+        for task in asyncio.all_tasks()
+    )
+
+
+def test_compact_mode_renders_first_text_delta_immediately(monkeypatch):
+    updates = []
+    prepare_calls = []
+
+    class FakeLive:
+        def __init__(self, *args, **kwargs):
+            self.transient = False
+
+        def start(self, refresh=True):
+            updates.append(("start", refresh))
+
+        def update(self, content, refresh=False):
+            updates.append(("update", refresh))
+
+    monkeypatch.setattr(streaming, "_compact_suppresses_verbose", lambda: True)
+    monkeypatch.setattr(
+        streaming,
+        "_prepare_terminal_for_final_agent_output",
+        lambda: prepare_calls.append("prepare"),
+    )
+    monkeypatch.setattr(streaming, "_get_pks_agent_live_class", lambda: FakeLive)
+
+    context = {
+        "content": Text(""),
+        "header": Text("● CTF agent"),
+        "footer": Text(""),
+        "timestamp": "00:00:00",
+        "model": "test",
+        "agent_name": "CTF agent",
+        "is_started": False,
+        "live": None,
+        "context_key": "delta-test",
+    }
+
+    assert streaming.update_agent_streaming_content(context, "first", None) is True
+    assert context["content"].plain == "first"
+    assert context["is_started"] is True
+    assert prepare_calls == ["prepare"]
+    assert ("update", True) in updates
+
+    assert streaming.update_agent_streaming_content(context, " second", None) is True
+    assert context["content"].plain == "first second"
+    assert updates[-1] == ("update", False)

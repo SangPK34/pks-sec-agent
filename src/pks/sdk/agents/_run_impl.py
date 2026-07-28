@@ -5,6 +5,7 @@ import contextvars
 import dataclasses
 import inspect
 import os
+import time
 
 _PKS_DEBUG_DIR = os.path.join(os.path.expanduser("~"), ".pks", "debug")
 from collections.abc import Awaitable
@@ -838,6 +839,7 @@ class RunImpl:
                         span_fn.span_data.input = tool_call.arguments
 
                     try:
+                        _tool_started_monotonic = time.monotonic()
                         _, _, result = await asyncio.gather(
                             hooks.on_tool_start(context_wrapper, agent, func_tool),
                             (
@@ -863,6 +865,18 @@ class RunImpl:
                                 _compact_started_at,
                                 result,
                             )
+                        try:
+                            from pks.util.latency_trace import record_latency_event
+
+                            record_latency_event(
+                                "tool_complete",
+                                agent=getattr(agent, "name", None) or "Agent",
+                                tool=func_tool.name,
+                                call_id=getattr(tool_call, "id", "") or "",
+                                duration=time.monotonic() - _tool_started_monotonic,
+                            )
+                        except Exception:
+                            pass
                     except asyncio.CancelledError:
                         # Let cancellation propagate without wrapping
                         raise

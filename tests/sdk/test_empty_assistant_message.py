@@ -82,6 +82,7 @@ def test_should_force_compact_only_from_second_streak():
 
 def test_role_only_stream_delta_is_not_model_progress():
     assert _delta_has_model_progress({"role": "assistant"}) is False
+    assert _delta_has_model_progress({"reasoning_content": "private reasoning"}) is False
     assert _delta_has_model_progress({"content": "ok"}) is True
     assert _delta_has_model_progress({"tool_calls": [{"id": "call_1"}]}) is True
 

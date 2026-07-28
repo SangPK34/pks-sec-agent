@@ -297,20 +297,8 @@ def _model_body(elapsed: float, state: dict[str, Any]) -> str:
     if overlay:
         action = overlay
     elif state.get("phase") == "tool_result":
-        if elapsed >= 90.0:
-            phase = int((elapsed - 90.0) // 30.0)
-            if state.get("m_phase") != phase:
-                state["m_phase"] = phase
-                state["m_pick"] = random.choice(MODEL_DELAY_MESSAGES)
-            action = state["m_pick"]
-        elif elapsed >= 30.0:
-            action = "Analyzing tool output…"
-        elif elapsed >= 10.0:
-            action = "Reasoning from tool result…"
-        elif elapsed >= 4.0:
-            action = "Processing tool result…"
-        else:
-            action = "Reading tool output…"
+        agent_name = state.get("agent_name") or "Agent"
+        action = f"{agent_name} đang phân tích kết quả tool…"
     elif elapsed >= 90.0:
         phase = int((elapsed - 90.0) // 30.0)
         if state.get("m_phase") != phase:
@@ -327,7 +315,12 @@ def _model_body(elapsed: float, state: dict[str, Any]) -> str:
         action = "Thinking…"
     else:
         action = "Architecting…"
-    return f"{action}  Ctrl+C to interrupt  •  {int(elapsed)}s"
+    elapsed_text = (
+        f"{elapsed:.1f}s"
+        if state.get("phase") == "tool_result"
+        else f"{int(elapsed)}s"
+    )
+    return f"{action}  Ctrl+C to interrupt  •  {elapsed_text}"
 
 
 def _tool_body(
@@ -362,6 +355,7 @@ class _WaitHintLoop:
         tool_label: str = "",
         exec_summary: str = "",
         model_phase: str = "",
+        agent_name: str = "",
     ) -> None:
         self._mode = mode  # "model" | "tool"
         self._tool_label = tool_label
@@ -372,6 +366,8 @@ class _WaitHintLoop:
         self._state: dict[str, Any] = {}
         if model_phase:
             self._state["phase"] = model_phase
+        if agent_name:
+            self._state["agent_name"] = agent_name
         self._status: Status | None = None
         self._console: Console | None = None
         # External (synchronous) pause: when set, the run loop yields the
@@ -651,8 +647,12 @@ async def model_wait_hints(model_phase: str = ""):
 class ModelStreamWaitHints:
     """Hints while waiting for the first meaningful streamed delta."""
 
-    def __init__(self, model_phase: str = "") -> None:
-        self._loop = _WaitHintLoop(mode="model", model_phase=model_phase)
+    def __init__(self, model_phase: str = "", agent_name: str = "") -> None:
+        self._loop = _WaitHintLoop(
+            mode="model",
+            model_phase=model_phase,
+            agent_name=agent_name,
+        )
         self._stopped_once = False
 
     async def start(self) -> None:

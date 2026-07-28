@@ -2015,17 +2015,16 @@ def update_agent_streaming_content(context, text_delta, token_stats=None):
     if _cleanup_in_progress:
         return False
 
-    # Compact REPL: never allocate a second Rich Live for token streaming.
+    # Compact REPL owns the task rows. Hand the terminal to the assistant Live
+    # on the first text delta so compact mode streams instead of buffering the
+    # entire response until ``finish_agent_streaming``.
     if _compact_suppresses_verbose():
-        if text_delta:
-            parsed_delta = parse_message_content(text_delta)
-            if parsed_delta and parsed_delta.strip():
-                content = context.get("content")
-                if isinstance(content, Text):
-                    content.append(parsed_delta)
-                else:
-                    context["content"] = (content or "") + parsed_delta
-        return True
+        parsed_delta = parse_message_content(text_delta) if text_delta else ""
+        if not parsed_delta or not parsed_delta.strip():
+            return True
+        if not context.get("_compact_streaming_started", False):
+            _prepare_terminal_for_final_agent_output()
+            context["_compact_streaming_started"] = True
 
     try:
         # Only parse and add text if we have actual content to add
@@ -2179,7 +2178,16 @@ def update_agent_streaming_content(context, text_delta, token_stats=None):
             # token (that repainted the whole growing buffer per token -> O(n^2)
             # and stalled the async loop). Rely on Live(auto_refresh=True,
             # refresh_per_second=...) to repaint on its own throttled cadence.
-            context["live"].update(updated_content, refresh=False)
+            first_ui_render = not context.get("_first_ui_rendered", False)
+            context["live"].update(updated_content, refresh=first_ui_render)
+            if first_ui_render:
+                context["_first_ui_rendered"] = True
+                try:
+                    from pks.util.latency_trace import mark_latency
+
+                    mark_latency("first_ui_render", once=True)
+                except Exception:
+                    pass
         return True
     except Exception as e:
         # If there's an error, set it in the context
