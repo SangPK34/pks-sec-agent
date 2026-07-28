@@ -20,6 +20,7 @@ def _append_tool_image(
     model: OpenAIChatCompletionsModel,
     path: Path,
     working_directory: Path | None = None,
+    tool_name: str = "view_image",
 ) -> None:
     call_id = "call_visual_test"
     arguments = (
@@ -36,7 +37,7 @@ def _append_tool_image(
                     "id": call_id,
                     "type": "function",
                     "function": {
-                        "name": "generic_linux_command",
+                        "name": tool_name,
                         "arguments": json.dumps(arguments),
                     },
                 }
@@ -79,7 +80,7 @@ def _has_inline_image(messages: list[dict[str, Any]]) -> bool:
 
 
 @pytest.mark.asyncio
-async def test_new_tool_image_is_attached_once_without_prompt_keywords(
+async def test_view_image_selection_is_attached_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     image_path = tmp_path / "fixed.png"
@@ -123,7 +124,36 @@ async def test_new_tool_image_is_attached_once_without_prompt_keywords(
 
 
 @pytest.mark.asyncio
-async def test_extensionless_jpeg_from_tool_output_is_auto_attached(
+async def test_generic_tool_image_output_does_not_trigger_vision(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    image_path = tmp_path / "mentioned.png"
+    _write_png(image_path)
+    model = OpenAIChatCompletionsModel(
+        model="openai/CAI",
+        openai_client=SimpleNamespace(),
+        agent_name="vision-not-selected",
+    )
+    _append_tool_image(
+        model,
+        image_path,
+        tool_name="generic_linux_command",
+    )
+    calls: list[list[dict[str, Any]]] = []
+
+    async def fake_direct(kwargs, *_args, **_kwargs):
+        calls.append(kwargs["messages"])
+        return SimpleNamespace()
+
+    monkeypatch.setattr(model, "_direct_httpx_completion", fake_direct)
+
+    await _fetch(model)
+
+    assert not _has_inline_image(calls[0])
+
+
+@pytest.mark.asyncio
+async def test_extensionless_jpeg_selected_by_view_image_is_attached(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     image_path = tmp_path / "file"
@@ -133,11 +163,7 @@ async def test_extensionless_jpeg_from_tool_output_is_auto_attached(
         openai_client=SimpleNamespace(),
         agent_name="vision-extensionless-artifact",
     )
-    monkeypatch.setattr(
-        "pks.tools.common._get_workspace_dir",
-        lambda: str(tmp_path),
-    )
-    _append_tool_image(model, Path("file"))
+    _append_tool_image(model, image_path)
     calls: list[list[dict[str, Any]]] = []
 
     async def fake_direct(kwargs, *_args, **_kwargs):
@@ -310,7 +336,8 @@ def test_tui_vision_status_only_persists_completion(
 
     rendered = [str(item) for item in writes]
     assert not any("Đang soi 2 ảnh" in item for item in rendered)
-    assert len(rendered) == 2
-    assert "✸ Đã soi ảnh /tmp/first.png" in rendered[0]
-    assert "✸ Đã soi ảnh /tmp/second.png" in rendered[1]
-    assert all("Vision + OCR" in item for item in rendered)
+    assert len(rendered) == 4
+    assert "• Viewed Image" in rendered[0]
+    assert "/tmp/first.png" in rendered[1]
+    assert "• Viewed Image" in rendered[2]
+    assert "/tmp/second.png" in rendered[3]

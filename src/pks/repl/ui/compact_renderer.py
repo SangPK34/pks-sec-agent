@@ -495,27 +495,28 @@ class CompactCLIHandler:
         self._print_worked_note()
 
     def _on_vision_complete(self, event: VisionCompleteEvent) -> None:
-        suffix = (
-            "Vision + OCR"
-            if event.mode == "vision_ocr"
-            else "OCR fallback"
-            if event.mode == "ocr_fallback"
-            else "Vision"
-        )
         lines: list[Text] = []
-        for path in event.image_paths or ("",):
-            prefix = "✸ Đã soi ảnh " if path else f"✸ Đã soi {event.image_count} ảnh"
-            line = Text(prefix, style="bold #58F9FF")
-            if path:
+        has_paths = bool(event.image_paths)
+        paths = event.image_paths or tuple(
+            "attached image" for _ in range(event.image_count)
+        )
+        for path in paths:
+            lines.append(Text("• Viewed Image", style="bold #58F9FF"))
+            detail = Text("  └ ", style=GREY_HINT)
+            if not has_paths:
+                detail.append(path)
+            else:
                 try:
-                    target = Path(path).resolve().as_uri()
-                    style = f"bold #58F9FF link {target}"
+                    resolved = Path(path).resolve()
+                    target = resolved.as_uri()
+                    try:
+                        display = str(resolved.relative_to(Path.home()))
+                    except ValueError:
+                        display = str(resolved)
+                    detail.append(display, style=f"link {target}")
                 except (OSError, ValueError):
-                    style = "bold #58F9FF"
-                line.append(path, style=style)
-            line.append(f" · {suffix}", style="bold #58F9FF")
-            line.append(f" · {event.duration_seconds:.1f}s", style=GREY_HINT)
-            lines.append(line)
+                    detail.append(path)
+            lines.append(detail)
         self._stop_live(release_ownership=False)
         for line in lines:
             self._console.print(line)

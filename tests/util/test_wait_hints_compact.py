@@ -65,8 +65,8 @@ def test_vision_activity_overlay_and_completion_row() -> None:
     )
 
     rendered = output.getvalue()
-    assert "✸ Đã soi ảnh /tmp/fixed.png" in rendered
-    assert "Vision + OCR" in rendered
+    assert "• Viewed Image" in rendered
+    assert "/tmp/fixed.png" in rendered
 
 
 def test_vision_completion_renders_each_image_and_does_not_restart_live(
@@ -93,11 +93,13 @@ def test_vision_completion_renders_each_image_and_does_not_restart_live(
     )
 
     lines = output.getvalue().splitlines()
-    assert len(lines) == 3
-    assert "/tmp/a.png" in lines[0]
-    assert "/tmp/b.png" in lines[1]
-    assert "/tmp/c.png" in lines[2]
-    assert all("Vision · 7.0s" in line for line in lines)
+    assert len(lines) == 6
+    assert lines[0] == "• Viewed Image"
+    assert "/tmp/a.png" in lines[1]
+    assert lines[2] == "• Viewed Image"
+    assert "/tmp/b.png" in lines[3]
+    assert lines[4] == "• Viewed Image"
+    assert "/tmp/c.png" in lines[5]
 
 
 @pytest.mark.asyncio

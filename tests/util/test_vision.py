@@ -16,6 +16,7 @@ from pks.util.vision import (
     input_has_images,
     is_vision_rejection,
     prepare_image_artifacts,
+    prepare_agent_vision_input,
     prepare_vision_input,
     remove_pending_vision_history,
 )
@@ -46,6 +47,19 @@ def test_prepare_local_image_as_multimodal_input(tmp_path: Path) -> None:
     assert image_part["detail"] == "auto"
     assert image_part["image_url"].startswith("data:image/png;base64,")
     base64.b64decode(image_part["image_url"].split(",", 1)[1], validate=True)
+
+
+def test_agent_path_input_stays_text_until_model_selects_view(
+    tmp_path: Path,
+) -> None:
+    image_path = tmp_path / "flag.png"
+    _write_png(image_path)
+    text = f"ghi nhớ path này, chưa cần xem: {image_path}"
+
+    prepared = prepare_agent_vision_input(text, SimpleNamespace())
+
+    assert prepared.model_input == text
+    assert not prepared.has_images
 
 
 def test_prepare_vision_can_be_disabled(

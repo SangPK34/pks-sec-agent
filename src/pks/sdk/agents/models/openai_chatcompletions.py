@@ -562,18 +562,16 @@ class OpenAIChatCompletionsModel(Model):
         )
 
     def _prepare_new_visual_artifacts(self, shared_context: str):
-        """Return unseen images emitted by tools, handoffs, or shared context."""
-        from pks.tools.common import _get_workspace_dir
+        """Return unseen images explicitly selected through ``view_image``."""
         from pks.util.vision import (
-            find_local_image_paths,
             find_tool_image_paths,
             prepare_image_artifacts,
         )
 
+        del shared_context
         paths = []
         inline_count = 0
-        tool_workdirs: dict[str, str] = {}
-        default_workdir = _get_workspace_dir()
+        tool_names: dict[str, str] = {}
         start = min(self._pks_visual_history_cursor, len(self.message_history))
         for message in self.message_history[start:]:
             if not isinstance(message, dict):
@@ -583,17 +581,9 @@ class OpenAIChatCompletionsModel(Model):
                     if not isinstance(tool_call, dict):
                         continue
                     function = tool_call.get("function") or {}
-                    try:
-                        arguments = json.loads(function.get("arguments") or "{}")
-                    except (TypeError, ValueError):
-                        continue
-                    if not isinstance(arguments, dict):
-                        continue
-                    working_directory = arguments.get("working_directory")
-                    if working_directory:
-                        tool_workdirs[str(tool_call.get("id") or "")] = str(
-                            working_directory
-                        )
+                    tool_names[str(tool_call.get("id") or "")] = str(
+                        function.get("name") or ""
+                    )
             if self._pks_message_has_image(message):
                 inline_count += sum(
                     1
@@ -602,21 +592,12 @@ class OpenAIChatCompletionsModel(Model):
                     and part.get("type") in {"input_image", "image_url"}
                 )
                 continue
-            message_text = self._pks_message_text(message)
-            finder = (
-                find_tool_image_paths
-                if message.get("role") == "tool"
-                else find_local_image_paths
-            )
-            if finder is find_tool_image_paths:
-                workdirs = [
-                    tool_workdirs.get(str(message.get("tool_call_id") or "")),
-                    default_workdir,
-                ]
-                paths.extend(finder(message_text, filter(None, workdirs)))
-            else:
-                paths.extend(finder(message_text))
-        paths.extend(find_tool_image_paths(shared_context, (default_workdir,)))
+            if (
+                message.get("role") == "tool"
+                and tool_names.get(str(message.get("tool_call_id") or ""))
+                == "view_image"
+            ):
+                paths.extend(find_tool_image_paths(self._pks_message_text(message)))
 
         unseen = []
         fingerprints = []
@@ -635,11 +616,10 @@ class OpenAIChatCompletionsModel(Model):
             unseen.append(path)
 
         label = (
-            "[PKS automatically attached visual artifact(s) discovered during "
-            "tool execution or agent handoff: "
+            "[PKS attached the visual artifact(s) explicitly selected through "
+            "view_image: "
             + ", ".join(str(path) for path in unseen)
-            + ". Inspect the pixels directly before deciding whether another "
-            "image-analysis tool is needed.]"
+            + ". Inspect these pixels directly.]"
         )
         return (
             prepare_image_artifacts(unseen, label),
@@ -705,32 +685,29 @@ class OpenAIChatCompletionsModel(Model):
 
                 terminal = get_terminal_output()
                 if terminal is not None:
-                    suffix = (
-                        "Vision + OCR"
-                        if event.mode == "vision_ocr"
-                        else "OCR fallback"
-                        if event.mode == "ocr_fallback"
-                        else "Vision"
+                    has_paths = bool(event.image_paths)
+                    paths = event.image_paths or tuple(
+                        "attached image" for _ in range(event.image_count)
                     )
-                    for path in event.image_paths or ("",):
-                        prefix = (
-                            "✸ Đã soi ảnh "
-                            if path
-                            else f"✸ Đã soi {event.image_count} ảnh"
+                    for path in paths:
+                        terminal.write(
+                            Text("• Viewed Image", style="bold #58F9FF")
                         )
-                        line = Text(prefix, style="bold #58F9FF")
-                        if path:
+                        detail = Text("  └ ", style="dim")
+                        if not has_paths:
+                            detail.append(path)
+                        else:
                             try:
-                                target = Path(path).resolve().as_uri()
-                                style = f"bold #58F9FF link {target}"
+                                resolved = Path(path).resolve()
+                                target = resolved.as_uri()
+                                try:
+                                    display = str(resolved.relative_to(Path.home()))
+                                except ValueError:
+                                    display = str(resolved)
+                                detail.append(display, style=f"link {target}")
                             except (OSError, ValueError):
-                                style = "bold #58F9FF"
-                            line.append(path, style=style)
-                        line.append(
-                            f" · {suffix} · {event.duration_seconds:.1f}s",
-                            style="bold #58F9FF",
-                        )
-                        terminal.write(line)
+                                detail.append(path)
+                        terminal.write(detail)
             except Exception:
                 pass
 

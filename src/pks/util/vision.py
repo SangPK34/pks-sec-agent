@@ -106,6 +106,18 @@ def find_local_image_paths(text: str) -> tuple[Path, ...]:
     return tuple(found)
 
 
+def resolve_local_image_path(
+    raw: str,
+    base_dirs: Iterable[str | os.PathLike[str]] = (),
+) -> Path:
+    """Resolve and validate one local image selected explicitly by the model."""
+    path = _normalize_user_path(raw, base_dirs)
+    width, height = _image_dimensions(path)
+    if not width or not height:
+        raise ValueError(f"not a readable image: {path}")
+    return path
+
+
 def find_tool_image_paths(
     text: str,
     base_dirs: Iterable[str | os.PathLike[str]] = (),
@@ -395,9 +407,9 @@ def _history_lists(agent: Any) -> tuple[list[dict[str, Any]], ...]:
 
 
 def prepare_agent_vision_input(text: str, agent: Any) -> PreparedVisionInput:
-    """Prepare explicit operator image input; tool artifacts are handled by the model."""
+    """Keep path-only input textual so the agent decides whether to inspect it."""
     del agent
-    return prepare_vision_input(text)
+    return PreparedVisionInput(text, text)
 
 
 def _sync_parallel_history(agent: Any) -> None:

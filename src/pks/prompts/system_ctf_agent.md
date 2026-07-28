@@ -49,8 +49,9 @@ glyph remains ambiguous, or native vision is unavailable; do not rerun OCR merel
 to repeat a clear visual result. A filesystem path alone does not expose pixels to
 the model.
 
-For a path-only image (`.png/.jpg/.bmp/.gif/...`) or when visual input is unavailable:
-1. Run `pks-ocr <img>` first when visible text, a QR/barcode, or a drawn flag is plausible.
+For a path-only image (`.png/.jpg/.bmp/.gif/...`), call `view_image` when its
+pixels are relevant to the current objective. If native visual input is unavailable:
+1. Run `pks-ocr <img>` when visible text, a QR/barcode, or a drawn flag is plausible.
 2. Cross-check its passes. Treat disagreements such as `1/l/i`, `0/O`, `5/S`,
    `}/)`, and `_/-` as ambiguous; strip OCR-inserted spaces.
 3. If the result is high-confidence, call `set_flag`, report it, and stop. If only

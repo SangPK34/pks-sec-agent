@@ -309,42 +309,38 @@ class CLIOutputHandler:
                 else f"[{event.level.upper()}] {event.message}"
             )
         elif isinstance(event, VisionCompleteEvent):
-            suffix = (
-                "Vision + OCR"
-                if event.mode == "vision_ocr"
-                else "OCR fallback"
-                if event.mode == "ocr_fallback"
-                else "Vision"
-            )
             if self._rich and self._console:
                 from rich.text import Text
 
-                paths = event.image_paths or ("",)
+                has_paths = bool(event.image_paths)
+                paths = event.image_paths or tuple(
+                    "attached image" for _ in range(event.image_count)
+                )
                 for path in paths:
-                    prefix = "✸ Đã soi ảnh " if path else f"✸ Đã soi {event.image_count} ảnh"
-                    line = Text(prefix, style="bold #58F9FF")
-                    try:
-                        target = Path(path).resolve().as_uri()
-                        if path:
-                            line.append(path, style=f"bold #58F9FF link {target}")
-                    except (OSError, ValueError):
-                        line.append(path)
-                    line.append(
-                        f" · {suffix} · {event.duration_seconds:.1f}s",
-                        style="bold #58F9FF",
-                    )
-                    self._console.print(line, highlight=False)
+                    title = Text("• Viewed Image", style="bold #58F9FF")
+                    detail = Text("  └ ", style="dim")
+                    if not has_paths:
+                        detail.append(path)
+                    else:
+                        try:
+                            resolved = Path(path).resolve()
+                            target = resolved.as_uri()
+                            try:
+                                display = str(resolved.relative_to(Path.home()))
+                            except ValueError:
+                                display = str(resolved)
+                            detail.append(display, style=f"link {target}")
+                        except (OSError, ValueError):
+                            detail.append(path)
+                    self._console.print(title, highlight=False)
+                    self._console.print(detail, highlight=False)
             else:
-                paths = event.image_paths or ("",)
+                paths = event.image_paths or tuple(
+                    "attached image" for _ in range(event.image_count)
+                )
                 for path in paths:
-                    prefix = (
-                        f"✸ Đã soi ảnh {path}"
-                        if path
-                        else f"✸ Đã soi {event.image_count} ảnh"
-                    )
-                    self._print(
-                        f"{prefix} · {suffix} · {event.duration_seconds:.1f}s"
-                    )
+                    self._print("• Viewed Image")
+                    self._print(f"  └ {path}")
         elif isinstance(event, AgentHandoffEvent):
             self._print(
                 f"[bold magenta]>> Handoff: {event.from_agent} -> {event.to_agent}[/bold magenta]"
