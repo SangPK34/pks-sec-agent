@@ -111,6 +111,7 @@ class VisionCompleteEvent(OutputEvent):
     """Visual input preparation/inspection has completed."""
 
     image_count: int = 0
+    image_paths: tuple[str, ...] = ()
     mode: str = "vision"
     duration_seconds: float = 0.0
 
@@ -315,15 +316,35 @@ class CLIOutputHandler:
                 if event.mode == "ocr_fallback"
                 else "Vision"
             )
-            message = (
-                f"✦ Đã soi {event.image_count} ảnh · {suffix} · "
-                f"{event.duration_seconds:.1f}s"
-            )
-            self._print(
-                f"[bold #58F9FF]{message}[/bold #58F9FF]"
-                if self._rich
-                else message
-            )
+            if self._rich and self._console:
+                from rich.text import Text
+
+                paths = event.image_paths or ("",)
+                for path in paths:
+                    prefix = "✸ Đã soi ảnh " if path else f"✸ Đã soi {event.image_count} ảnh"
+                    line = Text(prefix, style="bold #58F9FF")
+                    try:
+                        target = Path(path).resolve().as_uri()
+                        if path:
+                            line.append(path, style=f"bold #58F9FF link {target}")
+                    except (OSError, ValueError):
+                        line.append(path)
+                    line.append(
+                        f" · {suffix} · {event.duration_seconds:.1f}s",
+                        style="bold #58F9FF",
+                    )
+                    self._console.print(line, highlight=False)
+            else:
+                paths = event.image_paths or ("",)
+                for path in paths:
+                    prefix = (
+                        f"✸ Đã soi ảnh {path}"
+                        if path
+                        else f"✸ Đã soi {event.image_count} ảnh"
+                    )
+                    self._print(
+                        f"{prefix} · {suffix} · {event.duration_seconds:.1f}s"
+                    )
         elif isinstance(event, AgentHandoffEvent):
             self._print(
                 f"[bold magenta]>> Handoff: {event.from_agent} -> {event.to_agent}[/bold magenta]"

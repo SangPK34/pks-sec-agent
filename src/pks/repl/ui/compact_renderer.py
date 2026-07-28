@@ -43,6 +43,7 @@ from __future__ import annotations
 import os
 import threading
 import time
+from pathlib import Path
 
 from rich.console import Console, Group, RenderableType
 from rich.live import Live
@@ -501,17 +502,23 @@ class CompactCLIHandler:
             if event.mode == "ocr_fallback"
             else "Vision"
         )
-        line = Text()
-        line.append("✦ ", style="bold #58F9FF")
-        line.append(
-            f"Đã soi {event.image_count} ảnh · {suffix}",
-            style="bold #58F9FF",
-        )
-        line.append(f" · {event.duration_seconds:.1f}s", style=GREY_HINT)
-        was_live = self._stop_live(release_ownership=False)
-        self._console.print(line)
-        if was_live:
-            self._start_live()
+        lines: list[Text] = []
+        for path in event.image_paths or ("",):
+            prefix = "✸ Đã soi ảnh " if path else f"✸ Đã soi {event.image_count} ảnh"
+            line = Text(prefix, style="bold #58F9FF")
+            if path:
+                try:
+                    target = Path(path).resolve().as_uri()
+                    style = f"bold #58F9FF link {target}"
+                except (OSError, ValueError):
+                    style = "bold #58F9FF"
+                line.append(path, style=style)
+            line.append(f" · {suffix}", style="bold #58F9FF")
+            line.append(f" · {event.duration_seconds:.1f}s", style=GREY_HINT)
+            lines.append(line)
+        self._stop_live(release_ownership=False)
+        for line in lines:
+            self._console.print(line)
 
     def _print_thought_note(self) -> None:
         if self._thought_printed:

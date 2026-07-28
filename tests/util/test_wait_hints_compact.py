@@ -58,14 +58,46 @@ def test_vision_activity_overlay_and_completion_row() -> None:
     handler.handle(
         VisionCompleteEvent(
             image_count=1,
+            image_paths=("/tmp/fixed.png",),
             mode="vision_ocr",
             duration_seconds=1.25,
         )
     )
 
     rendered = output.getvalue()
-    assert "Đã soi 1 ảnh" in rendered
+    assert "✸ Đã soi ảnh /tmp/fixed.png" in rendered
     assert "Vision + OCR" in rendered
+
+
+def test_vision_completion_renders_each_image_and_does_not_restart_live(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = StringIO()
+    handler = CompactCLIHandler(
+        Console(file=output, force_terminal=False, width=100)
+    )
+    monkeypatch.setattr(handler, "_stop_live", lambda **_kwargs: True)
+    monkeypatch.setattr(
+        handler,
+        "_start_live",
+        lambda: pytest.fail("Vision completion must not restore stale animation"),
+    )
+
+    handler.handle(
+        VisionCompleteEvent(
+            image_count=3,
+            image_paths=("/tmp/a.png", "/tmp/b.png", "/tmp/c.png"),
+            mode="vision",
+            duration_seconds=7.0,
+        )
+    )
+
+    lines = output.getvalue().splitlines()
+    assert len(lines) == 3
+    assert "/tmp/a.png" in lines[0]
+    assert "/tmp/b.png" in lines[1]
+    assert "/tmp/c.png" in lines[2]
+    assert all("Vision · 7.0s" in line for line in lines)
 
 
 @pytest.mark.asyncio

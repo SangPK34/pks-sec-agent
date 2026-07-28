@@ -117,6 +117,7 @@ async def test_new_tool_image_is_attached_once_without_prompt_keywords(
     vision_events = [event for event in events if isinstance(event, VisionCompleteEvent)]
     assert len(vision_events) == 1
     assert vision_events[0].image_count == 1
+    assert vision_events[0].image_paths == (str(image_path),)
     assert vision_events[0].mode == "vision"
     assert model._pks_vision_status is None
 
@@ -280,7 +281,7 @@ async def test_vision_status_is_cleaned_when_request_fails(
     assert f"vision:{id(model)}" not in wait_hints._activity_overlays
 
 
-def test_tui_vision_status_writes_start_and_completion(
+def test_tui_vision_status_only_persists_completion(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     writes: list[Any] = []
@@ -300,9 +301,16 @@ def test_tui_vision_status_writes_start_and_completion(
         lambda _event: None,
     )
 
-    model._start_vision_status(2, "vision_ocr")
+    model._start_vision_status(
+        2,
+        "vision_ocr",
+        ("/tmp/first.png", "/tmp/second.png"),
+    )
     model._finish_vision_status()
 
     rendered = [str(item) for item in writes]
-    assert any("Đang soi 2 ảnh" in item for item in rendered)
-    assert any("Đã soi 2 ảnh · Vision + OCR" in item for item in rendered)
+    assert not any("Đang soi 2 ảnh" in item for item in rendered)
+    assert len(rendered) == 2
+    assert "✸ Đã soi ảnh /tmp/first.png" in rendered[0]
+    assert "✸ Đã soi ảnh /tmp/second.png" in rendered[1]
+    assert all("Vision + OCR" in item for item in rendered)

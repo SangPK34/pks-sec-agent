@@ -22,6 +22,7 @@ import uuid
 import weakref
 from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass, field
+from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Final, Literal, Optional, cast, overload
 
@@ -646,21 +647,28 @@ class OpenAIChatCompletionsModel(Model):
             inline_count,
         )
 
-    def _start_vision_status(self, image_count: int, mode: str) -> None:
+    def _start_vision_status(
+        self,
+        image_count: int,
+        mode: str,
+        image_paths: tuple[str, ...] = (),
+    ) -> None:
         if image_count <= 0:
             return
         owner = f"vision:{id(self)}"
-        is_new = self._pks_vision_status is None
         if self._pks_vision_status is None:
             self._pks_vision_status = {
                 "owner": owner,
                 "image_count": image_count,
+                "image_paths": image_paths,
                 "mode": mode,
                 "started": time.monotonic(),
             }
         else:
             self._pks_vision_status["image_count"] = image_count
             self._pks_vision_status["mode"] = mode
+            if image_paths:
+                self._pks_vision_status["image_paths"] = image_paths
         noun = "image" if image_count == 1 else "images"
         action = (
             f"Reading {image_count} {noun} with OCR fallback…"
@@ -671,22 +679,6 @@ class OpenAIChatCompletionsModel(Model):
             owner,
             action,
         )
-        if is_new and os.getenv("PKS_TUI_MODE", "").lower() == "true":
-            try:
-                from rich.text import Text
-                from pks.tui.core.terminal_console import get_terminal_output
-
-                terminal = get_terminal_output()
-                if terminal is not None:
-                    terminal.write(
-                        Text(
-                            f"◈ Đang soi {image_count} ảnh bằng Vision…",
-                            style="bold #58F9FF",
-                        )
-                    )
-            except Exception:
-                pass
-
     def _finish_vision_status(self, *, completed: bool = True) -> None:
         status = self._pks_vision_status
         if status is None:
@@ -698,6 +690,7 @@ class OpenAIChatCompletionsModel(Model):
         event = VisionCompleteEvent(
             agent_id=self.agent_name,
             image_count=int(status["image_count"]),
+            image_paths=tuple(status.get("image_paths", ())),
             mode=str(status["mode"]),
             duration_seconds=max(
                 0.0,
@@ -719,14 +712,25 @@ class OpenAIChatCompletionsModel(Model):
                         if event.mode == "ocr_fallback"
                         else "Vision"
                     )
-                    terminal.write(
-                        Text(
-                            f"✦ Đã soi {event.image_count} ảnh · "
-                            f"{suffix} · "
-                            f"{event.duration_seconds:.1f}s",
+                    for path in event.image_paths or ("",):
+                        prefix = (
+                            "✸ Đã soi ảnh "
+                            if path
+                            else f"✸ Đã soi {event.image_count} ảnh"
+                        )
+                        line = Text(prefix, style="bold #58F9FF")
+                        if path:
+                            try:
+                                target = Path(path).resolve().as_uri()
+                                style = f"bold #58F9FF link {target}"
+                            except (OSError, ValueError):
+                                style = "bold #58F9FF"
+                            line.append(path, style=style)
+                        line.append(
+                            f" · {suffix} · {event.duration_seconds:.1f}s",
                             style="bold #58F9FF",
                         )
-                    )
+                        terminal.write(line)
             except Exception:
                 pass
 
@@ -2088,8 +2092,8 @@ class OpenAIChatCompletionsModel(Model):
                             continue
 
                         if _delta_has_model_progress(delta):
-                            self._finish_vision_status()
                             await stream_wait_hints.stop()
+                            self._finish_vision_status()
 
                         # Handle Claude reasoning content first (before regular content)
                         reasoning_content = None
@@ -3188,7 +3192,6 @@ class OpenAIChatCompletionsModel(Model):
 
             if os.getenv("PKS_DEBUG_SYSTEM_PROMPT", "").strip().lower() in {"1", "true", "yes"}:
                 import hashlib
-                from pathlib import Path
 
                 text = str(final_system_instructions)
                 safe_name = "".join(
@@ -3229,7 +3232,11 @@ class OpenAIChatCompletionsModel(Model):
         auto_ocr_evidence = ""
         vision_image_count = inline_image_count + len(auto_vision.images)
         if vision_image_count:
-            self._start_vision_status(vision_image_count, "vision")
+            self._start_vision_status(
+                vision_image_count,
+                "vision",
+                tuple(str(image.path) for image in auto_vision.images),
+            )
         if auto_vision.has_images:
             content: list[dict[str, Any]] = [
                 {"type": "text", "text": auto_vision.original_text}
