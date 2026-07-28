@@ -220,13 +220,6 @@ def _flat_agent_header(agent_name: str, counter: int, model: str = "",
     t = Text()
     t.append(f"{_DOT} ", style="bold #ff3355")
     t.append(f"{agent_name}", style="bold #ff3355")
-    if os.getenv("PKS_UNRESTRICTED", "false").strip().lower() in ("true", "1", "yes"):
-        t.append(
-            Text.from_markup(
-                "  [bold bright_red]Unrestricted Mode [/bold bright_red]"
-                "[bold white on bright_red] BETA [/]"
-            )
-        )
     return t
 
 
@@ -1952,13 +1945,6 @@ def create_agent_streaming_context(agent_name, counter, model):
         header = Text()
         header.append(f"{_DOT} ", style="bold #ff3355")
         header.append(f"{agent_name}", style="bold #ff3355")
-        if os.getenv("PKS_UNRESTRICTED", "false").strip().lower() in ("true", "1", "yes"):
-            header.append(
-                Text.from_markup(
-                    "  [bold bright_red]Unrestricted Mode [/bold bright_red]"
-                    "[bold white on bright_red] BETA [/]"
-                )
-            )
         # No trailing \\n — Group already stacks children; extra \\n doubled vertical gaps.
 
         # Create the content area for streaming text

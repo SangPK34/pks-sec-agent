@@ -209,7 +209,6 @@ def _build_session_banner_panel(
     hint = _model_hint_for_banner_width(cw)
     rows = _banner_command_rows()
 
-    _unrestricted = os.getenv("PKS_UNRESTRICTED", "false").strip().lower() in ("true", "1", "yes")
     _yolo = os.getenv("PKS_YOLO", "").strip().lower() in ("true", "1", "yes")
     sess_parts: list = [
         ("Model  ", _GREY),
@@ -224,15 +223,6 @@ def _build_session_banner_panel(
         sess_parts += [
             "\n",
             orchestration_beta_text(),
-        ]
-    if _unrestricted:
-        # Un solo Text.from_markup evita un hueco “sin color” entre segmentos en algunos terminales.
-        sess_parts += [
-            "\n",
-            Text.from_markup(
-                "[bold bright_red]Unrestricted Mode [/bold bright_red]"
-                "[bold white on bright_red] BETA [/]"
-            ),
         ]
     sess = Text.assemble(*sess_parts)
     cmds = Table(
@@ -249,14 +239,6 @@ def _build_session_banner_panel(
         cmds.add_row(c, h)
     # Promo lines above /help subtitle (same style: bold yellow + highlighted invocation)
     _promo_rows: list[Text] = []
-    if not _unrestricted:
-        _promo_rows.append(
-            Text.assemble(
-                ("Try ", "bold yellow"),
-                ("pks --unrestricted", "bold black on bright_yellow"),
-                (" BETA for uncensored mode", "bold yellow"),
-            )
-        )
     if not _yolo:
         _promo_rows.append(
             Text.assemble(

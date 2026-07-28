@@ -137,8 +137,6 @@ def main():
     parser.add_argument("--version", action="store_true", help="Show PKS version and exit")
     parser.add_argument("--update", action="store_true", help="Check for updates and install if available")
     parser.add_argument("--continue", "-c", action="store_true", dest="continue_mode", help="Enable continuous mode")
-    parser.add_argument("--unrestricted", action="store_true",
-                        help="Use the unrestricted cybersecurity prompt profile")
     parser.add_argument(
         "--yolo",
         action="store_true",
@@ -163,10 +161,6 @@ def main():
     # --- --yolo (must run before agent/tools: disables sensitive-command prompts) ---
     if parsed_args.yolo:
         os.environ["PKS_YOLO"] = "true"
-
-    # --- --unrestricted ---
-    if parsed_args.unrestricted:
-        os.environ["PKS_UNRESTRICTED"] = "true"
 
     # --- --version ---
     if parsed_args.version:
