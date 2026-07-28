@@ -3229,40 +3229,22 @@ class OpenAIChatCompletionsModel(Model):
         auto_ocr_evidence = ""
         vision_image_count = inline_image_count + len(auto_vision.images)
         if vision_image_count:
-            self._start_vision_status(
-                vision_image_count,
-                "vision_ocr" if auto_vision.has_images else "vision",
-            )
+            self._start_vision_status(vision_image_count, "vision")
         if auto_vision.has_images:
-            auto_ocr_evidence = await asyncio.to_thread(auto_vision.ocr_evidence)
-            if self._pks_native_vision_disabled:
-                self._start_vision_status(vision_image_count, "ocr_fallback")
-                converted_messages.append(
-                    {
-                        "role": "user",
-                        "content": auto_vision.original_text
-                        + "\n\n"
-                        + auto_ocr_evidence,
-                    }
-                )
-                auto_vision_is_native = False
-            else:
-                content: list[dict[str, Any]] = [
-                    {"type": "text", "text": auto_vision.original_text}
-                ]
-                content.extend(
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": image.data_url,
-                            "detail": "auto",
-                        },
-                    }
-                    for image in auto_vision.images
-                )
-                if auto_ocr_evidence:
-                    content.append({"type": "text", "text": auto_ocr_evidence})
-                converted_messages.append({"role": "user", "content": content})
+            content: list[dict[str, Any]] = [
+                {"type": "text", "text": auto_vision.original_text}
+            ]
+            content.extend(
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": image.data_url,
+                        "detail": "auto",
+                    },
+                }
+                for image in auto_vision.images
+            )
+            converted_messages.append({"role": "user", "content": content})
 
         # Add support for prompt caching for claude (not automatically applied)
         # Gemini supports it too
@@ -3564,6 +3546,7 @@ class OpenAIChatCompletionsModel(Model):
                 raise
             self._pks_native_vision_disabled = True
             self._start_vision_status(vision_image_count, "ocr_fallback")
+            auto_ocr_evidence = await asyncio.to_thread(auto_vision.ocr_evidence)
             fallback_kwargs = dict(kwargs)
             fallback_kwargs["messages"] = converted_messages[:-1] + [
                 {
@@ -3584,6 +3567,7 @@ class OpenAIChatCompletionsModel(Model):
             except Exception:
                 self._finish_vision_status(completed=False)
                 raise
+            self._pks_native_vision_disabled = False
 
         self._pks_visual_history_cursor = len(self.message_history)
         self._pks_seen_visual_artifacts.update(auto_vision_fingerprints)

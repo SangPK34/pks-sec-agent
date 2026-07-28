@@ -105,7 +105,7 @@ async def test_new_tool_image_is_attached_once_without_prompt_keywords(
     monkeypatch.setattr(
         PreparedVisionInput,
         "ocr_evidence",
-        lambda _self: "OCR assist evidence",
+        lambda _self: pytest.fail("native Vision must not run OCR"),
     )
 
     await _fetch(model)
@@ -117,7 +117,7 @@ async def test_new_tool_image_is_attached_once_without_prompt_keywords(
     vision_events = [event for event in events if isinstance(event, VisionCompleteEvent)]
     assert len(vision_events) == 1
     assert vision_events[0].image_count == 1
-    assert vision_events[0].mode == "vision_ocr"
+    assert vision_events[0].mode == "vision"
     assert model._pks_vision_status is None
 
 
@@ -147,7 +147,7 @@ async def test_extensionless_jpeg_from_tool_output_is_auto_attached(
     monkeypatch.setattr(
         PreparedVisionInput,
         "ocr_evidence",
-        lambda _self: "OCR assist evidence",
+        lambda _self: pytest.fail("native Vision must not run OCR"),
     )
     monkeypatch.setattr(
         "pks.sdk.agents.models.openai_chatcompletions.OUTPUT.emit",
@@ -198,7 +198,7 @@ async def test_tool_image_retries_with_ocr_when_provider_rejects_vision(
     assert not _has_inline_image(calls[1])
     assert calls[1][-1]["role"] == "user"
     assert calls[1][-1]["content"].endswith("OCR fallback evidence")
-    assert model._pks_native_vision_disabled is True
+    assert model._pks_native_vision_disabled is False
     vision_events = [event for event in events if isinstance(event, VisionCompleteEvent)]
     assert len(vision_events) == 1
     assert vision_events[0].mode == "ocr_fallback"
