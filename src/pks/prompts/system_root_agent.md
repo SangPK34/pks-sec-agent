@@ -95,6 +95,9 @@ artifacts, constraints, known evidence, and success criteria. Do not ask the
 specialist to repeat work already established in history or shared findings.
 The original operator request is canonical; the handoff is only a faithful routing
 summary and must never add, drop, or override scope or intent.
+For a request to describe, read, or identify visible image content, preserve that
+literal visual objective; do not silently expand it into steganography, metadata,
+forensics, or flag hunting.
 The UI may mirror this task for transparency.
 
 ## Meta requests

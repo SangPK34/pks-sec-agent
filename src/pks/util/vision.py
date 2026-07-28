@@ -31,12 +31,6 @@ _PATH_PATTERN = re.compile(
     )""",
     re.IGNORECASE | re.VERBOSE,
 )
-_VISUAL_FOLLOWUP_PATTERN = re.compile(
-    r"(?:ảnh|hình|tấm\s+hình|image|picture|photo|screenshot|visual|pixel)",
-    re.IGNORECASE,
-)
-
-
 def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
     try:
         value = int((os.getenv(name) or str(default)).strip())
@@ -134,14 +128,26 @@ class PreparedVisionInput:
         if not self.images:
             return self.original_text
 
+        return "\n".join(
+            [
+                self.original_text,
+                "",
+                "[PKS vision fallback: the active model/provider rejected image input.]",
+                self.ocr_evidence(),
+            ]
+        )
+
+    def ocr_evidence(self) -> str:
+        """Return bounded OCR evidence usable alongside native image input."""
+        if not self.images:
+            return ""
+
         command = shutil.which("pks-ocr")
         timeout = _env_int("PKS_OCR_TIMEOUT", 60, 5, 300)
         output_max = _env_int("PKS_TOOL_OUTPUT_MAX", 20_000, 800, 200_000)
         sections = [
-            self.original_text,
-            "",
-            "[PKS vision fallback: the active model/provider rejected image input. "
-            "Use the OCR evidence below and the original local paths.]",
+            "[PKS OCR assist: use this text as fallback/cross-check; inspect attached "
+            "pixels directly when native vision is available.]",
         ]
         for image in self.images:
             sections.extend(["", f"Image: {image.path}"])
@@ -174,11 +180,11 @@ class PreparedVisionInput:
         return "\n".join(sections)
 
 
-def prepare_vision_input(
-    text: str,
-    recent_paths: Iterable[Path] = (),
+def prepare_image_artifacts(
+    paths: Iterable[Path],
+    text: str = "[PKS attached visual artifact(s) discovered during tool execution.]",
 ) -> PreparedVisionInput:
-    """Attach explicit images, or the latest image for a visual follow-up."""
+    """Prepare existing local images without inferring intent from user wording."""
     if not _vision_enabled():
         return PreparedVisionInput(text, text)
 
@@ -187,28 +193,21 @@ def prepare_vision_input(
     max_total = _env_int("PKS_IMAGE_TOTAL_MAX_BYTES", 20_000_000, max_each, 100_000_000)
     max_pixels = _env_int("PKS_IMAGE_MAX_PIXELS", 40_000_000, 1_000_000, 200_000_000)
 
-    paths = list(find_local_image_paths(text))
-    inferred = False
-    if not paths and _VISUAL_FOLLOWUP_PATTERN.search(text or ""):
-        seen: set[Path] = set()
-        for candidate in recent_paths:
-            try:
-                path = Path(candidate).resolve(strict=True)
-            except (OSError, ValueError):
-                continue
-            if (
-                path not in seen
-                and path.is_file()
-                and path.suffix.lower() in _IMAGE_EXTENSIONS
-            ):
-                seen.add(path)
-                paths.append(path)
-        inferred = bool(paths)
-
     prepared: list[PreparedImage] = []
+    seen: set[Path] = set()
     total = 0
-    for path in paths[:max_images]:
+    for candidate in paths:
+        if len(prepared) >= max_images:
+            break
         try:
+            path = Path(candidate).resolve(strict=True)
+            if (
+                path in seen
+                or not path.is_file()
+                or path.suffix.lower() not in _IMAGE_EXTENSIONS
+            ):
+                continue
+            seen.add(path)
             size = path.stat().st_size
             width, height = _image_dimensions(path)
             if size > max_each or (width and height and width * height > max_pixels):
@@ -228,15 +227,6 @@ def prepare_vision_input(
         return PreparedVisionInput(text, text)
 
     content: list[dict[str, Any]] = [{"type": "input_text", "text": text}]
-    if inferred:
-        content.append(
-            {
-                "type": "input_text",
-                "text": "[PKS attached the most recent local image: "
-                + ", ".join(str(image.path) for image in prepared)
-                + "]",
-            }
-        )
     for image in prepared:
         content.append(
             {
@@ -250,6 +240,11 @@ def prepare_vision_input(
         model_input=[{"role": "user", "content": content}],
         images=tuple(prepared),
     )
+
+
+def prepare_vision_input(text: str) -> PreparedVisionInput:
+    """Attach local images explicitly present in operator text."""
+    return prepare_image_artifacts(find_local_image_paths(text), text)
 
 
 def _exception_chain(exc: BaseException) -> Iterable[BaseException]:
@@ -350,54 +345,10 @@ def _history_lists(agent: Any) -> tuple[list[dict[str, Any]], ...]:
     return tuple(histories)
 
 
-def _message_text(message: dict[str, Any]) -> str:
-    content = message.get("content", "")
-    if isinstance(content, str):
-        return content
-    if not isinstance(content, list):
-        return ""
-    return "\n".join(
-        str(part.get("text", ""))
-        for part in content
-        if isinstance(part, dict) and part.get("text")
-    )
-
-
-def _recent_images_from_agent(agent: Any, limit: int = 4) -> tuple[Path, ...]:
-    found: list[Path] = []
-    seen: set[Path] = set()
-    for history in _history_lists(agent):
-        for message in reversed(history[-24:]):
-            for path in reversed(find_local_image_paths(_message_text(message))):
-                if path not in seen:
-                    seen.add(path)
-                    found.append(path)
-                    if len(found) >= limit:
-                        return tuple(found)
-    return tuple(found)
-
-
-def remember_recent_agent_images(owner_agent: Any, source_agent: Any) -> None:
-    """Remember specialist image artifacts for a later Root visual follow-up."""
-    images = _recent_images_from_agent(source_agent)
-    if images:
-        setattr(owner_agent, "_pks_recent_images", images)
-
-
 def prepare_agent_vision_input(text: str, agent: Any) -> PreparedVisionInput:
-    """Prepare a turn using explicit paths or recent artifacts from this workflow."""
-    recent = getattr(agent, "_pks_recent_images", ())
-    if not recent:
-        recent = _recent_images_from_agent(agent)
-    if not recent and os.getenv("PKS_TUI_MODE", "").lower() != "true":
-        try:
-            from pks.sdk.agents.simple_agent_manager import AGENT_MANAGER
-
-            shared = AGENT_MANAGER.get_shared_context_injection()
-            recent = tuple(reversed(find_local_image_paths(shared)))
-        except Exception:
-            recent = ()
-    return prepare_vision_input(text, recent)
+    """Prepare explicit operator image input; tool artifacts are handled by the model."""
+    del agent
+    return prepare_vision_input(text)
 
 
 def _sync_parallel_history(agent: Any) -> None:

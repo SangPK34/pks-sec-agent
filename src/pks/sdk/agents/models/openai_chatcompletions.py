@@ -501,6 +501,12 @@ class OpenAIChatCompletionsModel(Model):
                 # Share the same list reference
                 self.message_history = AGENT_MANAGER._message_history[self.agent_name]
 
+        # Only visual artifacts created after this model instance starts are
+        # candidates for automatic attachment. Restored history stays inert.
+        self._pks_visual_history_cursor = len(self.message_history)
+        self._pks_seen_visual_artifacts: set[str] = set()
+        self._pks_native_vision_disabled = False
+
         # Instance-based converter
         self._converter = _Converter()
 
@@ -527,6 +533,67 @@ class OpenAIChatCompletionsModel(Model):
                     msg_copy["cache_control"] = msg["cache_control"]
                 converted.append(msg_copy)
         return converted
+
+    @staticmethod
+    def _pks_message_text(message: dict[str, Any]) -> str:
+        content = message.get("content", "")
+        if isinstance(content, str):
+            return content
+        if not isinstance(content, list):
+            return ""
+        return "\n".join(
+            str(part.get("text", ""))
+            for part in content
+            if isinstance(part, dict) and part.get("text")
+        )
+
+    @staticmethod
+    def _pks_message_has_image(message: dict[str, Any]) -> bool:
+        content = message.get("content")
+        if not isinstance(content, list):
+            return False
+        return any(
+            isinstance(part, dict)
+            and part.get("type") in {"input_image", "image_url"}
+            for part in content
+        )
+
+    def _prepare_new_visual_artifacts(self, shared_context: str):
+        """Return unseen images emitted by tools, handoffs, or shared context."""
+        from pks.util.vision import find_local_image_paths, prepare_image_artifacts
+
+        paths = []
+        start = min(self._pks_visual_history_cursor, len(self.message_history))
+        for message in self.message_history[start:]:
+            if not isinstance(message, dict) or self._pks_message_has_image(message):
+                continue
+            paths.extend(find_local_image_paths(self._pks_message_text(message)))
+        paths.extend(find_local_image_paths(shared_context))
+
+        unseen = []
+        fingerprints = []
+        for path in paths:
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            fingerprint = f"{path}:{stat.st_size}:{stat.st_mtime_ns}"
+            if (
+                fingerprint in self._pks_seen_visual_artifacts
+                or fingerprint in fingerprints
+            ):
+                continue
+            fingerprints.append(fingerprint)
+            unseen.append(path)
+
+        label = (
+            "[PKS automatically attached visual artifact(s) discovered during "
+            "tool execution or agent handoff: "
+            + ", ".join(str(path) for path in unseen)
+            + ". Inspect the pixels directly before deciding whether another "
+            "image-analysis tool is needed.]"
+        )
+        return prepare_image_artifacts(unseen, label), tuple(fingerprints)
 
     def _messages_for_token_count_after_history_mutation(
         self,
@@ -2947,6 +3014,7 @@ class OpenAIChatCompletionsModel(Model):
 
         # IMPORTANT: Include existing message history for context
         converted_messages = self._shallow_copy_history_messages()
+        shared_context = ""
 
         # IMPORTANT: We maintain our own message_history which already contains all messages.
         # The SDK also passes 'input' with conversation items, but these duplicate what we have.
@@ -3013,6 +3081,41 @@ class OpenAIChatCompletionsModel(Model):
                 logger.debug(f"Message list was fixed: {prev_length} -> {new_length} messages")
         except Exception:
             pass
+
+        auto_vision, auto_vision_fingerprints = self._prepare_new_visual_artifacts(
+            shared_context
+        )
+        auto_vision_is_native = auto_vision.has_images
+        auto_ocr_evidence = ""
+        if auto_vision.has_images:
+            auto_ocr_evidence = await asyncio.to_thread(auto_vision.ocr_evidence)
+            if self._pks_native_vision_disabled:
+                converted_messages.append(
+                    {
+                        "role": "user",
+                        "content": auto_vision.original_text
+                        + "\n\n"
+                        + auto_ocr_evidence,
+                    }
+                )
+                auto_vision_is_native = False
+            else:
+                content: list[dict[str, Any]] = [
+                    {"type": "text", "text": auto_vision.original_text}
+                ]
+                content.extend(
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": image.data_url,
+                            "detail": "auto",
+                        },
+                    }
+                    for image in auto_vision.images
+                )
+                if auto_ocr_evidence:
+                    content.append({"type": "text", "text": auto_ocr_evidence})
+                converted_messages.append({"role": "user", "content": content})
 
         # Add support for prompt caching for claude (not automatically applied)
         # Gemini supports it too
@@ -3299,9 +3402,38 @@ class OpenAIChatCompletionsModel(Model):
                 filtered_kwargs[key] = value
         kwargs = filtered_kwargs
 
-        return await self._direct_httpx_completion(
-            kwargs, model_settings, tool_choice, stream, parallel_tool_calls
-        )
+        try:
+            response = await self._direct_httpx_completion(
+                kwargs, model_settings, tool_choice, stream, parallel_tool_calls
+            )
+        except Exception as exc:
+            if not auto_vision_is_native:
+                raise
+            from pks.util.vision import is_vision_rejection
+
+            if not is_vision_rejection(exc):
+                raise
+            self._pks_native_vision_disabled = True
+            fallback_kwargs = dict(kwargs)
+            fallback_kwargs["messages"] = converted_messages[:-1] + [
+                {
+                    "role": "user",
+                    "content": auto_vision.original_text
+                    + "\n\n"
+                    + auto_ocr_evidence,
+                }
+            ]
+            response = await self._direct_httpx_completion(
+                fallback_kwargs,
+                model_settings,
+                tool_choice,
+                stream,
+                parallel_tool_calls,
+            )
+
+        self._pks_visual_history_cursor = len(self.message_history)
+        self._pks_seen_visual_artifacts.update(auto_vision_fingerprints)
+        return response
 
     async def _direct_httpx_completion(
         self,

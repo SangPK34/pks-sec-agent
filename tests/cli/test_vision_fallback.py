@@ -61,11 +61,6 @@ def test_headless_retries_once_with_ocr_after_vision_rejection(
         lambda *_args: compacted.append(True),
     )
     monkeypatch.setattr(
-        cli_headless,
-        "remember_recent_agent_images",
-        lambda *_args: None,
-    )
-    monkeypatch.setattr(
         PreparedVisionInput,
         "ocr_fallback_input",
         lambda _self: "OCR fallback evidence",

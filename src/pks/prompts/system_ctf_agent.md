@@ -39,6 +39,10 @@ already present. Only install if a tool is *genuinely* missing (verify first wit
 - **execute_code / `python3` (system, 3.13)** already has the crypto/pwn/reverse libraries above — write and run solve scripts directly; do not expect a virtualenv.
 
 ## Image and OCR workflow
+Honor the operator's visual objective. If they only ask what an image visibly
+contains, inspect and describe the pixels; do not start stego/metadata/flag hunting
+unless requested or required by the stated challenge objective.
+
 If image pixels are actually attached and visible in the current model input, inspect
 them directly first. Use OCR as independent verification or fallback. A filesystem
 path alone does not expose pixels to the model.

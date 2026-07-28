@@ -32,7 +32,6 @@ from pks.util.vision import (
     input_has_images,
     is_vision_rejection,
     prepare_agent_vision_input,
-    remember_recent_agent_images,
     remove_pending_vision_history,
 )
 
@@ -398,10 +397,6 @@ class TerminalRunner:
                         compact_vision_history(self.agent, prepared_vision)
                         if last_agent is not None and last_agent is not self.agent:
                             compact_vision_history(last_agent, prepared_vision)
-                    remember_recent_agent_images(
-                        self.agent,
-                        last_agent or self.agent,
-                    )
         except asyncio.CancelledError:
             # This is expected when cancelling - just log it
             self.logger.info(f"Command execution cancelled in terminal {self.config.terminal_number}")

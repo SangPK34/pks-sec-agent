@@ -82,7 +82,6 @@ from pks.util.vision import (
     input_has_images,
     is_vision_rejection,
     prepare_agent_vision_input,
-    remember_recent_agent_images,
     remove_pending_vision_history,
 )
 from litellm.exceptions import RateLimitError, Timeout
@@ -1429,7 +1428,6 @@ def _run_single_agent(agent, conversation_input, console, force_until_flag, ctf_
                 compact_vision_history(agent, prepared)
                 if last_agent is not None and last_agent is not agent:
                     compact_vision_history(last_agent, prepared)
-            remember_recent_agent_images(agent, last_agent or agent)
 
 
 def _run_streamed(agent, conversation_input, console, force_until_flag, ctf_global):
