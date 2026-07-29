@@ -4,12 +4,14 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import pytest
 from PIL import Image
 from rich.console import Console
 
 from pks.output import VisionCompleteEvent
 from pks.sdk.agents import ModelSettings, ModelTracing, generation_span
+from pks.sdk.agents.models.chatcompletions import httpx_client
 from pks.sdk.agents.models.openai_chatcompletions import OpenAIChatCompletionsModel
 from pks.util.vision import PreparedVisionInput
 
@@ -68,6 +70,35 @@ async def _fetch(model: OpenAIChatCompletionsModel) -> Any:
             tracing=ModelTracing.DISABLED,
             stream=False,
         )
+
+
+async def _fetch_stream(model: OpenAIChatCompletionsModel) -> Any:
+    with generation_span(disabled=True) as span:
+        return await model._fetch_response(
+            system_instructions=None,
+            input=[],
+            model_settings=ModelSettings(),
+            tools=[],
+            output_schema=None,
+            handoffs=[],
+            span=span,
+            tracing=ModelTracing.DISABLED,
+            stream=True,
+        )
+
+
+def _mock_httpx_transport(
+    monkeypatch: pytest.MonkeyPatch,
+    handler: Any,
+) -> None:
+    async_client = httpx.AsyncClient
+    transport = httpx.MockTransport(handler)
+
+    def create_client(*args: Any, **kwargs: Any) -> httpx.AsyncClient:
+        kwargs["transport"] = transport
+        return async_client(*args, **kwargs)
+
+    monkeypatch.setattr(httpx_client.httpx, "AsyncClient", create_client)
 
 
 def _has_inline_image(messages: list[dict[str, Any]]) -> bool:
@@ -231,6 +262,99 @@ async def test_tool_image_retries_with_ocr_when_provider_rejects_vision(
     vision_events = [event for event in events if isinstance(event, VisionCompleteEvent)]
     assert len(vision_events) == 1
     assert vision_events[0].mode == "ocr_fallback"
+    assert model._pks_vision_status is None
+
+
+@pytest.mark.asyncio
+async def test_streaming_vision_rejection_falls_back_before_stream_is_returned(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    image_path = tmp_path / "stream.png"
+    _write_png(image_path)
+    model = OpenAIChatCompletionsModel(
+        model="openai/CAI",
+        openai_client=SimpleNamespace(),
+        agent_name=f"vision-stream-fallback-{id(image_path)}",
+    )
+    _append_tool_image(model, image_path)
+    requests: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        requests.append(body)
+        if _has_inline_image(body["messages"]):
+            return httpx.Response(
+                415,
+                json={"error": {"message": "image_url is not supported"}},
+            )
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            text=(
+                'data: {"id":"fallback","model":"test","choices":'
+                '[{"delta":{"content":"OCR ok"},"finish_reason":null}]}\n\n'
+                "data: [DONE]\n\n"
+            ),
+        )
+
+    _mock_httpx_transport(monkeypatch, handler)
+    monkeypatch.setattr(
+        PreparedVisionInput,
+        "ocr_evidence",
+        lambda _self: "OCR fallback evidence",
+    )
+
+    _response, stream = await _fetch_stream(model)
+    try:
+        chunks = [chunk async for chunk in stream]
+
+        assert len(requests) == 2
+        assert _has_inline_image(requests[0]["messages"])
+        assert not _has_inline_image(requests[1]["messages"])
+        assert requests[1]["messages"][-1]["content"].endswith(
+            "OCR fallback evidence"
+        )
+        assert chunks[0].choices[0].delta["content"] == "OCR ok"
+        assert model._pks_seen_visual_artifacts
+    finally:
+        model._finish_vision_status(completed=False)
+
+
+@pytest.mark.asyncio
+async def test_streaming_vision_failure_does_not_mark_artifact_seen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    image_path = tmp_path / "failed-stream.png"
+    _write_png(image_path)
+    model = OpenAIChatCompletionsModel(
+        model="openai/CAI",
+        openai_client=SimpleNamespace(),
+        agent_name=f"vision-stream-failed-{id(image_path)}",
+    )
+    _append_tool_image(model, image_path)
+    requests: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        requests.append(body)
+        status = 415 if _has_inline_image(body["messages"]) else 422
+        return httpx.Response(
+            status,
+            json={"error": {"message": "unsupported image request"}},
+        )
+
+    _mock_httpx_transport(monkeypatch, handler)
+    monkeypatch.setattr(
+        PreparedVisionInput,
+        "ocr_evidence",
+        lambda _self: "OCR fallback evidence",
+    )
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await _fetch_stream(model)
+
+    assert len(requests) == 2
+    assert not model._pks_seen_visual_artifacts
     assert model._pks_vision_status is None
 
 
