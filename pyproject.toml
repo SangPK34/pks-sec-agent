@@ -35,6 +35,7 @@ dependencies = [
     "trafilatura>=2.0",                # HTML -> Markdown main-content extraction
     "curl-cffi>=0.7",                  # Anti-bot fallback (Chrome TLS fingerprint)
     "pypdf>=4.0",                      # PDF text extraction (BSD-licensed successor of PyPDF2)
+    "Pillow>=10.4,<13",                # Local image inspection and BMP/TIFF conversion
     # --- API server ---
     "uvicorn<=1",
     "fastapi>=0.115.5, <1",

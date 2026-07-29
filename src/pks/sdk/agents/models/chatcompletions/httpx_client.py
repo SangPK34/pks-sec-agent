@@ -161,168 +161,178 @@ async def direct_httpx_completion(
 
     if stream:
         client = httpx.AsyncClient(timeout=180.0)
+        resp: httpx.Response | None = None
 
-        async def _stream_gen() -> AsyncIterator:
-            """Streaming generator with built-in retry for connection/HTTP errors.
+        # Open the HTTP stream eagerly. Provider/schema errors must surface to
+        # the caller before it records a visual artifact as accepted.
+        try:
+            last_error: Exception | None = None
+            for attempt in range(_MAX_RETRIES + 1):
+                try:
+                    request = client.build_request(
+                        "POST", url, json=body, headers=headers
+                    )
+                    resp = await client.send(request, stream=True)
 
-            Retries happen BEFORE yielding any chunks — once streaming starts,
-            the response is committed (same pattern as CSI proxy).
-            """
-            try:
-                last_error: Exception | None = None
-                for attempt in range(_MAX_RETRIES + 1):
-                    try:
-                        async with client.stream("POST", url, json=body, headers=headers) as resp:
-                            # Check for retryable HTTP status BEFORE streaming
-                            if resp.status_code in _RETRYABLE_STATUS:
-                                await resp.aread()  # drain response body
-                                if attempt < _MAX_RETRIES:
-                                    retry_after = _extract_retry_after(resp)
-                                    delay = retry_after if retry_after else _retry_delay(attempt)
-                                    if verbose_http_retries():
-                                        print(f"⏳ HTTP {resp.status_code} — stream retry "
-                                              f"{attempt + 1}/{_MAX_RETRIES} in {delay:.1f}s")
-                                    else:
-                                        _LOG.debug(
-                                            "stream HTTP %s — retry %s/%s in %.1fs",
-                                            resp.status_code, attempt + 1, _MAX_RETRIES, delay,
-                                        )
-                                    await sleep_with_retry_backoff_hint(delay)
-                                    continue
-                                # Retries exhausted — raise typed error
-                                if resp.status_code == 429:
-                                    raise LLMRateLimited(
-                                        f"Rate limited (429) after {_MAX_RETRIES} retries from {url}",
-                                        retry_after=_extract_retry_after(resp),
-                                    )
-                                raise LLMProviderUnavailable(
-                                    f"Server error ({resp.status_code}) after {_MAX_RETRIES} retries from {url}"
-                                )
-
-                            # HTTP 413: request body exceeds gateway/proxy POST
-                            # size cap. Mirror the non-stream branch and raise
-                            # LLMContextOverflow so the REPL can give actionable
-                            # guidance instead of a raw httpx traceback.
-                            if resp.status_code == 413:
-                                try:
-                                    await resp.aread()
-                                except Exception:
-                                    pass
-                                _log_failed_completion_response(resp, url)
-                                raise LLMContextOverflow(
-                                    f"Request body too large (413) for {url}",
-                                    details=_build_413_details(url, body),
-                                )
-
-                            if not resp.is_success:
-                                try:
-                                    await resp.aread()
-                                except Exception:
-                                    pass
-                                _log_failed_completion_response(resp, url)
-                            resp.raise_for_status()
-
-                            # Stream is good — parse SSE chunks and yield
-                            buffer = ""
-                            async for chunk_text in resp.aiter_text():
-                                buffer += chunk_text
-                                while "\n" in buffer:
-                                    line, buffer = buffer.split("\n", 1)
-                                    line = line.strip()
-                                    if not line.startswith("data: "):
-                                        continue
-                                    data_str = line[6:]
-                                    if data_str == "[DONE]":
-                                        return
-                                    try:
-                                        data = json.loads(data_str)
-                                        from litellm import ModelResponse as _MR
-                                        from litellm.types.utils import StreamingChoices, Delta
-
-                                        delta_data = data.get("choices", [{}])[0].get("delta", {})
-                                        delta = Delta(
-                                            role=delta_data.get("role"),
-                                            content=delta_data.get("content"),
-                                            tool_calls=delta_data.get("tool_calls"),
-                                            reasoning_content=delta_data.get("reasoning_content"),
-                                            thinking_blocks=delta_data.get("thinking_blocks"),
-                                            thinking=delta_data.get("thinking"),
-                                        )
-                                        choices = [StreamingChoices(
-                                            index=0,
-                                            delta=delta,
-                                            finish_reason=data.get("choices", [{}])[0].get("finish_reason"),
-                                        )]
-                                        usage = None
-                                        usage_data = data.get("usage")
-                                        if usage_data:
-                                            from litellm.types.utils import Usage
-                                            usage = Usage(
-                                                prompt_tokens=usage_data.get("prompt_tokens", 0),
-                                                completion_tokens=usage_data.get("completion_tokens", 0),
-                                                total_tokens=usage_data.get("total_tokens", 0),
-                                            )
-                                        yield _MR(
-                                            id=data.get("id", "chatcmpl-direct"),
-                                            created=data.get("created", int(time.time())),
-                                            model=data.get("model", model_name),
-                                            choices=choices,
-                                            usage=usage,
-                                            object="chat.completion.chunk",
-                                        )
-                                    except json.JSONDecodeError:
-                                        continue
-                            return  # stream completed successfully
-
-                    except httpx.ConnectError as e:
-                        # Connection failure — retry (like CSI: proxyReq.on('error'))
-                        last_error = e
+                    if resp.status_code in _RETRYABLE_STATUS:
+                        await resp.aread()
                         if attempt < _MAX_RETRIES:
-                            delay = _retry_delay(attempt)
+                            retry_after = _extract_retry_after(resp)
+                            delay = retry_after if retry_after else _retry_delay(attempt)
                             if verbose_http_retries():
-                                print(f"⏳ Connection error — retry "
-                                      f"{attempt + 1}/{_MAX_RETRIES} in {delay:.1f}s: {e}")
+                                print(
+                                    f"⏳ HTTP {resp.status_code} — stream retry "
+                                    f"{attempt + 1}/{_MAX_RETRIES} in {delay:.1f}s"
+                                )
                             else:
                                 _LOG.debug(
-                                    "connection error — retry %s/%s in %.1fs: %s",
-                                    attempt + 1, _MAX_RETRIES, delay, e,
+                                    "stream HTTP %s — retry %s/%s in %.1fs",
+                                    resp.status_code,
+                                    attempt + 1,
+                                    _MAX_RETRIES,
+                                    delay,
                                 )
                             await sleep_with_retry_backoff_hint(delay)
+                            resp = None
                             continue
-                        raise LLMProviderUnavailable(
-                            f"Connection failed after {_MAX_RETRIES} retries: {e}"
-                        ) from e
-
-                    except httpx.HTTPStatusError as e:
-                        # Non-retryable HTTP error (e.g. 400, 401)
-                        last_error = e
-                        if e.response.status_code in _RETRYABLE_STATUS and attempt < _MAX_RETRIES:
-                            delay = _retry_delay(attempt)
-                            if verbose_http_retries():
-                                print(f"⏳ HTTP {e.response.status_code} — retry "
-                                      f"{attempt + 1}/{_MAX_RETRIES} in {delay:.1f}s")
-                            else:
-                                _LOG.debug(
-                                    "HTTP %s — retry %s/%s in %.1fs",
-                                    e.response.status_code, attempt + 1, _MAX_RETRIES, delay,
-                                )
-                            await sleep_with_retry_backoff_hint(delay)
-                            continue
-                        if e.response.status_code == 429:
+                        if resp.status_code == 429:
                             raise LLMRateLimited(
-                                f"Rate limited (429) after retries from {url}"
-                            ) from e
-                        if e.response.status_code in (408, 504):
-                            raise LLMTimeout(
-                                f"Timeout ({e.response.status_code}) from {url}"
-                            ) from e
-                        raise
+                                f"Rate limited (429) after {_MAX_RETRIES} retries from {url}",
+                                retry_after=_extract_retry_after(resp),
+                            )
+                        raise LLMProviderUnavailable(
+                            f"Server error ({resp.status_code}) after "
+                            f"{_MAX_RETRIES} retries from {url}"
+                        )
 
-                # Should not reach here, but safety net
+                    if resp.status_code == 413:
+                        try:
+                            await resp.aread()
+                        except Exception:
+                            pass
+                        _log_failed_completion_response(resp, url)
+                        raise LLMContextOverflow(
+                            f"Request body too large (413) for {url}",
+                            details=_build_413_details(url, body),
+                        )
+
+                    if not resp.is_success:
+                        try:
+                            await resp.aread()
+                        except Exception:
+                            pass
+                        _log_failed_completion_response(resp, url)
+                    resp.raise_for_status()
+                    break
+
+                except httpx.ConnectError as e:
+                    last_error = e
+                    if attempt < _MAX_RETRIES:
+                        delay = _retry_delay(attempt)
+                        if verbose_http_retries():
+                            print(
+                                f"⏳ Connection error — retry "
+                                f"{attempt + 1}/{_MAX_RETRIES} in {delay:.1f}s: {e}"
+                            )
+                        else:
+                            _LOG.debug(
+                                "connection error — retry %s/%s in %.1fs: %s",
+                                attempt + 1,
+                                _MAX_RETRIES,
+                                delay,
+                                e,
+                            )
+                        await sleep_with_retry_backoff_hint(delay)
+                        continue
+                    raise LLMProviderUnavailable(
+                        f"Connection failed after {_MAX_RETRIES} retries: {e}"
+                    ) from e
+
+                except httpx.HTTPStatusError as e:
+                    last_error = e
+                    if e.response.status_code == 429:
+                        raise LLMRateLimited(
+                            f"Rate limited (429) after retries from {url}"
+                        ) from e
+                    if e.response.status_code in (408, 504):
+                        raise LLMTimeout(
+                            f"Timeout ({e.response.status_code}) from {url}"
+                        ) from e
+                    raise
+
+            if resp is None:
                 if last_error:
                     raise last_error
+                raise LLMProviderUnavailable(f"Failed to open stream from {url}")
+        except BaseException:
+            if resp is not None:
+                await resp.aclose()
+            await client.aclose()
+            raise
 
+        accepted_response = resp
+
+        async def _stream_gen() -> AsyncIterator:
+            """Yield SSE chunks from an already accepted provider stream."""
+            try:
+                buffer = ""
+                async for chunk_text in accepted_response.aiter_text():
+                    buffer += chunk_text
+                    while "\n" in buffer:
+                        line, buffer = buffer.split("\n", 1)
+                        line = line.strip()
+                        if not line.startswith("data: "):
+                            continue
+                        data_str = line[6:]
+                        if data_str == "[DONE]":
+                            return
+                        try:
+                            data = json.loads(data_str)
+                            from litellm import ModelResponse as _MR
+                            from litellm.types.utils import Delta, StreamingChoices
+
+                            delta_data = data.get("choices", [{}])[0].get("delta", {})
+                            delta = Delta(
+                                role=delta_data.get("role"),
+                                content=delta_data.get("content"),
+                                tool_calls=delta_data.get("tool_calls"),
+                                reasoning_content=delta_data.get("reasoning_content"),
+                                thinking_blocks=delta_data.get("thinking_blocks"),
+                                thinking=delta_data.get("thinking"),
+                            )
+                            choices = [
+                                StreamingChoices(
+                                    index=0,
+                                    delta=delta,
+                                    finish_reason=data.get("choices", [{}])[0].get(
+                                        "finish_reason"
+                                    ),
+                                )
+                            ]
+                            usage = None
+                            usage_data = data.get("usage")
+                            if usage_data:
+                                from litellm.types.utils import Usage
+
+                                usage = Usage(
+                                    prompt_tokens=usage_data.get("prompt_tokens", 0),
+                                    completion_tokens=usage_data.get(
+                                        "completion_tokens", 0
+                                    ),
+                                    total_tokens=usage_data.get("total_tokens", 0),
+                                )
+                            yield _MR(
+                                id=data.get("id", "chatcmpl-direct"),
+                                created=data.get("created", int(time.time())),
+                                model=data.get("model", model_name),
+                                choices=choices,
+                                usage=usage,
+                                object="chat.completion.chunk",
+                            )
+                        except json.JSONDecodeError:
+                            continue
             finally:
+                await accepted_response.aclose()
                 await client.aclose()
 
         response_obj = Response(
